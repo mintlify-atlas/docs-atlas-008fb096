@@ -1,0 +1,167 @@
+{
+  "projectType": "cli-tool",
+  "projectName": "GSD 2",
+  "projectDescription": "An autonomous coding agent with meta-prompting, context engineering and spec-driven development that enables long-running autonomous work without losing track of the big picture",
+  "theme": "aspen",
+  "primaryColor": "#848c8e",
+  "lightColor": "#11161e",
+  "darkColor": "#cfd0d2",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/overview",
+              "concepts/milestones-slices-tasks",
+              "concepts/state-machine",
+              "concepts/context-engineering",
+              "concepts/git-strategy"
+            ]
+          },
+          {
+            "group": "Usage Modes",
+            "pages": [
+              "usage/step-mode",
+              "usage/auto-mode",
+              "usage/two-terminal-workflow"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/preferences",
+              "configuration/models",
+              "configuration/timeouts-budgets",
+              "configuration/skill-discovery"
+            ]
+          },
+          {
+            "group": "Extensions & Tools",
+            "pages": [
+              "extensions/overview",
+              "extensions/bundled-extensions",
+              "extensions/bundled-agents",
+              "extensions/browser-tools",
+              "extensions/search-tools",
+              "extensions/background-shell"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "advanced/crash-recovery",
+              "advanced/worktrees",
+              "advanced/migration-from-v1",
+              "advanced/cost-tracking",
+              "advanced/verification"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Command Reference",
+        "groups": [
+          {
+            "group": "Core Commands",
+            "pages": [
+              "commands/gsd",
+              "commands/gsd-auto",
+              "commands/gsd-stop",
+              "commands/gsd-status",
+              "commands/gsd-discuss",
+              "commands/gsd-queue"
+            ]
+          },
+          {
+            "group": "Configuration Commands",
+            "pages": [
+              "commands/gsd-prefs",
+              "commands/gsd-config",
+              "commands/gsd-doctor",
+              "commands/gsd-migrate"
+            ]
+          },
+          {
+            "group": "Utility Commands",
+            "pages": [
+              "commands/worktree",
+              "commands/voice",
+              "commands/exit"
+            ]
+          },
+          {
+            "group": "Keyboard Shortcuts",
+            "pages": [
+              "commands/keyboard-shortcuts"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Architecture",
+        "groups": [
+          {
+            "group": "System Design",
+            "pages": [
+              "architecture/overview",
+              "architecture/loader-pattern",
+              "architecture/extension-system",
+              "architecture/resource-structure"
+            ]
+          },
+          {
+            "group": "File Structure",
+            "pages": [
+              "architecture/gsd-directory",
+              "architecture/state-files",
+              "architecture/artifact-types"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Autonomous mode with fresh context per task",
+    "Step mode with interactive wizard",
+    "State machine driven by .gsd/ files",
+    "Branch-per-slice git strategy with squash merge",
+    "Cost tracking and budget ceiling",
+    "Crash recovery and stuck detection",
+    "Multi-model support with per-phase selection",
+    "13 bundled extensions including browser tools and search",
+    "3 specialized subagents (Scout, Researcher, Worker)",
+    "Migration tool from v1 format",
+    "Real-time dashboard overlay",
+    "Timeout supervision with adaptive replanning"
+  ],
+  "publicApiSurface": [
+    "/gsd - Step mode entry point",
+    "/gsd auto - Autonomous execution mode",
+    "/gsd stop - Graceful auto mode stop",
+    "/gsd status - Progress dashboard",
+    "/gsd discuss - Architecture discussion",
+    "/gsd queue - Queue future milestones",
+    "/gsd prefs - Preferences management",
+    "/gsd migrate - Migrate from v1",
+    "/gsd doctor - Validate .gsd/ integrity",
+    "/worktree - Git worktree lifecycle",
+    "/voice - Speech-to-text toggle",
+    "/exit - Kill process",
+    "gsd config - Setup wizard",
+    "Ctrl+Alt+G - Dashboard overlay",
+    "Ctrl+Alt+V - Voice toggle",
+    "Ctrl+Alt+B - Background processes"
+  ]
+}
