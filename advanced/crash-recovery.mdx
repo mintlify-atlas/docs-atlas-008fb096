@@ -1,0 +1,226 @@
+---
+title: Crash Recovery
+description: How GSD detects and recovers from interrupted sessions
+---
+
+GSD's crash recovery system ensures no work is lost when an auto-mode session terminates unexpectedly. Every unit execution is tracked, and surviving session data is analyzed to resume exactly where the crash occurred.
+
+## How It Works
+
+### Lock File Tracking
+
+GSD maintains an `auto.lock` file in `.gsd/` that records the current unit's state:
+
+```typescript
+interface LockData {
+  pid: number;
+  startedAt: string;
+  unitType: string;          // e.g. "execute-task"
+  unitId: string;            // e.g. "M001/S01/T01"
+  unitStartedAt: string;
+  completedUnits: number;
+  sessionFile?: string;      // Path to Pi's JSONL session file
+}
+```
+
+The lock file is:
+- **Written** when auto-mode starts a new unit
+- **Updated** on each unit dispatch
+- **Deleted** on clean stop (`/gsd stop`)
+
+If the lock file exists when GSD starts, the previous session crashed.
+
+### Session Forensics
+
+Pi's SessionManager persists every entry to disk via `appendFileSync` as it happens. When a crash occurs, the JSONL file contains a complete record of:
+
+- Every tool call made
+- Every tool result returned
+- Every assistant response
+- Every error encountered
+
+GSD's session forensics module (`session-forensics.ts`) reads this file and reconstructs:
+
+<Steps>
+  <Step title="Parse the JSONL">
+    Extract all entries from the surviving session file. Since auto-mode creates a new session per unit, the last session header marks the start of the crashed unit's entries.
+  </Step>
+
+  <Step title="Build execution trace">
+    Track tool calls, file operations, shell commands, and errors in chronological order:
+    
+    - **Files written/edited** — deduplicated list of paths
+    - **Files read** — all read operations
+    - **Commands run** — shell commands with success/failure status
+    - **Errors** — tool errors and their messages
+    - **Last reasoning** — the agent's final text output before crash
+  </Step>
+
+  <Step title="Capture git state">
+    Run `git status --porcelain` and `git diff` to see what actually changed on disk, independent of what the agent reported.
+  </Step>
+
+  <Step title="Format recovery briefing">
+    Synthesize a structured prompt section ready for injection into the next session.
+  </Step>
+</Steps>
+
+### Execution Trace Structure
+
+```typescript
+interface ExecutionTrace {
+  toolCalls: ToolCall[];               // All completed tool calls
+  filesWritten: string[];              // Deduplicated paths
+  filesRead: string[];                 // All reads
+  commandsRun: { command: string; failed: boolean }[];
+  errors: string[];                    // Error messages
+  lastReasoning: string;               // Last agent output
+  toolCallCount: number;               // Total completed calls
+}
+```
+
+Tool call compression groups consecutive reads for readability:
+
+```
+1. read 3 files: `parser.ts`, `types.ts`, `validator.ts`
+2. write `src/migrate/index.ts`
+3. bash: `npm test migrate` ✓
+4. edit `src/migrate/command.ts`
+```
+
+## Recovery Flow
+
+When GSD detects a crash lock:
+
+<Steps>
+  <Step title="Read the lock file">
+    Extract the unit type, unit ID, and session file path.
+  </Step>
+
+  <Step title="Synthesize recovery briefing">
+    Parse the session JSONL (or fall back to the last activity log), extract the trace, combine with current git state.
+  </Step>
+
+  <Step title="Resume with full context">
+    Dispatch a new unit execution with the recovery briefing pre-injected into the prompt.
+    
+    The briefing includes:
+    - **Completed tool calls** — compressed trace showing what was already done
+    - **Files already written** — list of paths that exist on disk
+    - **Commands already run** — which succeeded, which failed
+    - **Errors before crash** — last 3 errors encountered
+    - **Current git state** — filesystem truth from `git status` and `git diff`
+    - **Last reasoning** — what the agent was thinking before it died
+    - **Resume instructions** — explicit guidance to continue, not redo
+  </Step>
+
+  <Step title="Clear the lock">
+    Once the briefing is injected and the new session starts, clear the crash lock.
+  </Step>
+</Steps>
+
+## Recovery Briefing Format
+
+The synthesized prompt looks like this:
+
+```markdown
+## Crash Recovery Briefing
+
+You are resuming `execute-task` for `M001/S01/T02` after a crash.
+The previous session completed **37 tool calls** before dying.
+Use this briefing to pick up exactly where it left off. Do NOT redo completed work.
+
+### Completed Tool Calls
+
+1. read 5 files: `plan.ts`, `types.ts`, `writer.ts`, `validator.ts`, `parser.ts`
+2. write `src/migrate/transformer.ts`
+3. bash: `npm test migrate/transformer` ✓
+4. edit `src/migrate/index.ts`
+5. bash: `npm run build` ❌
+6. edit `tsconfig.json`
+7. bash: `npm run build` ✓
+
+### Files Already Written/Edited
+
+- `src/migrate/transformer.ts`
+- `src/migrate/index.ts`
+- `tsconfig.json`
+
+These files exist on disk from the previous run. Verify they look correct before continuing.
+
+### Commands Already Run
+
+- `npm test migrate/transformer` ✓
+- `npm run build` ❌
+- `npm run build` ✓
+
+### Errors Before Crash
+
+- Type error: Cannot find name 'GSDMilestone'
+
+### Current Git State (filesystem truth)
+
+```
+Status:
+M  src/migrate/transformer.ts
+M  src/migrate/index.ts
+M  tsconfig.json
+
+Staged:
+ 3 files changed, 247 insertions(+), 12 deletions(-)
+```
+
+### Last Agent Reasoning Before Crash
+
+> The build is now passing. I'll commit these changes and mark the task as complete...
+
+### Resume Instructions
+
+1. Check the task plan for remaining work
+2. Verify files listed above exist and look correct on disk
+3. Continue from where the previous session left off
+4. Do NOT re-read files or re-run commands that already succeeded above
+```
+
+<Note>
+  **No redos.** The recovery briefing explicitly tells the agent what already happened. This prevents wasted tool calls re-reading files, re-running builds, or re-editing code that's already correct.
+</Note>
+
+## Fallback: Activity Logs
+
+If the session file is missing or corrupted, GSD falls back to the last activity log in `.gsd/activity/`. Activity logs are JSONL snapshots written at the end of each unit, containing the same entry format as session files.
+
+The forensics module uses the same trace extraction logic for both sources.
+
+## Stuck Detection vs. Crash Recovery
+
+GSD distinguishes between two failure modes:
+
+| Scenario | Detection | Recovery |
+|----------|-----------|----------|
+| **Crash** | Lock file exists on startup | Read session JSONL, synthesize briefing, resume |
+| **Stuck** | Same unit dispatches twice | Retry once with deep diagnostic, then stop |
+
+Crash recovery reads the **surviving session file**. Stuck detection reads the **last activity log** (a copy of the previous attempt).
+
+<Warning>
+  Crash recovery does NOT attempt to fix the crash. It resumes execution with full context. If the crash was caused by a model timeout, network failure, or Pi infrastructure issue, the resumed session will proceed normally. If the crash was caused by a code bug or infinite loop, you'll need to intervene manually.
+</Warning>
+
+## Related Files
+
+- `crash-recovery.ts:30` — Lock file read/write/clear operations
+- `session-forensics.ts:95` — Trace extraction from JSONL entries
+- `session-forensics.ts:230` — Full recovery briefing synthesis
+- `session-forensics.ts:371` — Tool call trace compression
+
+## See Also
+
+<CardGroup cols={2}>
+  <Card title="Auto Mode" icon="robot" href="/usage/auto-mode">
+    How the state machine dispatches units
+  </Card>
+  <Card title="Cost Tracking" icon="chart-line" href="/advanced/cost-tracking">
+    Metrics captured before context wipe
+  </Card>
+</CardGroup>

@@ -1,0 +1,622 @@
+---
+title: "Browser Tools"
+description: "Playwright-based browser automation for UI verification and testing"
+icon: "browser"
+---
+
+The **Browser Tools** extension gives GSD full browser interaction capabilities for verifying and testing UI work without requiring a human to look at the screen.
+
+## Overview
+
+Built on **Playwright**, the browser-tools extension provides 12 tools for:
+
+- Navigating pages and clicking elements
+- Filling forms and typing text
+- Reading page content and accessibility trees
+- Taking screenshots and capturing state
+- Waiting for elements and verifying behavior
+- Managing tabs and frames
+
+<Tip>
+Browser Tools runs in **headed mode** by default so you can optionally watch what the agent is doing.
+</Tip>
+
+---
+
+## Key Design Principles
+
+1. **Every action returns feedback** — Accessibility snapshot or screenshots on navigate
+2. **Errors include visual debugging** — Screenshots on failure, surfaced JS errors
+3. **Smart waits** — `domcontentloaded` + best-effort settle, not blocking `networkidle`
+4. **Screenshot constraints** — Capped at 1568px max dimension (Anthropic API limit safety)
+5. **JPEG for viewport, PNG for crops** — JPEG for full screenshots (smaller), PNG for element crops (transparency)
+6. **Auto-handles JS dialogs** — `alert`/`confirm`/`prompt` auto-accepted to prevent page freezes
+7. **Auto-switches to new tabs** — Popups and `target="_blank"` automatically registered
+
+---
+
+## Architecture
+
+**Shared state per session:**
+- Single shared `Browser` + `BrowserContext` + `Page`
+- Console, network, and dialog events buffered in memory
+- Browser launched **headed** so the user can optionally watch
+- Cleaned up on `session_shutdown`
+
+**Artifacts:**
+- Screenshots, traces, and HAR files saved to `.artifacts/browser/`
+- Timestamped session directories
+- Automatic HAR recording (minimal mode, omit content)
+
+---
+
+## Available Tools (12)
+
+### Navigation & Content
+
+<AccordionGroup>
+  <Accordion title="browser_navigate">
+    **Navigate to a URL**
+    
+    ```typescript
+    {
+      url: "https://example.com",
+      waitUntil?: "load" | "domcontentloaded" | "networkidle",
+      screenshot?: boolean,
+      timeout?: number
+    }
+    ```
+    
+    Returns:
+    - Page title and URL
+    - Compact page summary (headings, element counts)
+    - Screenshot (if requested)
+    - Console/network warnings
+  </Accordion>
+  
+  <Accordion title="browser_get_accessibility_tree">
+    **Get full accessibility tree for a page or selector**
+    
+    ```typescript
+    {
+      selector?: string,  // Optional: scope to a specific element
+      mode?: "form" | "dialog" | "navigation" | "errors" | "visible_only"
+    }
+    ```
+    
+    Returns markdown-formatted accessibility tree.
+    
+    **Modes:**
+    - `form` — Inputs, buttons, labels
+    - `dialog` — Dialog containers + interactive children
+    - `navigation` — Links, buttons, navigation landmarks
+    - `errors` — Alert/error elements
+    - `visible_only` — All visible elements
+  </Accordion>
+  
+  <Accordion title="browser_snapshot_refs">
+    **Create element references for targeted actions**
+    
+    ```typescript
+    {
+      selector?: string,       // Scope to a specific region
+      interactiveOnly?: boolean,
+      limit?: number,           // Max refs to generate
+      mode?: "form" | "dialog" | "navigation" | "errors"
+    }
+    ```
+    
+    Returns a list of elements with `@ref` identifiers that can be used with other tools.
+    
+    Refs include:
+    - Tag, role, accessible name
+    - Selector hints (id, aria-label, CSS path)
+    - Visibility and enabled state
+    - Content and structural fingerprints for resilient resolution
+  </Accordion>
+  
+  <Accordion title="browser_find">
+    **Find elements by text, role, or selector**
+    
+    ```typescript
+    {
+      text?: string,
+      role?: string,
+      selector?: string
+    }
+    ```
+    
+    Returns matching elements with:
+    - Tag, role, accessible name
+    - Selector hints
+    - Visibility and enabled state
+    
+    Use when you need to quickly locate elements without creating full refs.
+  </Accordion>
+</AccordionGroup>
+
+### Interaction
+
+<AccordionGroup>
+  <Accordion title="browser_click">
+    **Click an element**
+    
+    ```typescript
+    {
+      ref: string,              // Element reference from browser_snapshot_refs
+      // OR
+      selector: string,
+      
+      modifiers?: string[],     // "Shift", "Control", "Alt", "Meta"
+      clickCount?: number,
+      button?: "left" | "right" | "middle",
+      timeout?: number
+    }
+    ```
+    
+    Returns:
+    - Verification (state change detected)
+    - Page diff (what changed)
+    - Compact page summary
+  </Accordion>
+  
+  <Accordion title="browser_fill">
+    **Fill an input or textarea**
+    
+    ```typescript
+    {
+      ref: string,              // Element reference
+      // OR
+      selector: string,
+      
+      value: string,
+      timeout?: number
+    }
+    ```
+    
+    Clears the field first, then types the value.
+  </Accordion>
+  
+  <Accordion title="browser_type">
+    **Type text character-by-character**
+    
+    ```typescript
+    {
+      text: string,
+      delay?: number,           // Delay between keystrokes (ms)
+      selector?: string         // Optional: target element
+    }
+    ```
+    
+    Simulates realistic typing into the currently focused element or specified selector.
+  </Accordion>
+  
+  <Accordion title="browser_press">
+    **Press a keyboard key**
+    
+    ```typescript
+    {
+      key: string,              // e.g., "Enter", "Tab", "Escape", "a", "Control+S"
+      selector?: string
+    }
+    ```
+    
+    Supports key combinations like `Control+A`, `Meta+V`.
+  </Accordion>
+</AccordionGroup>
+
+### Verification & Debugging
+
+<AccordionGroup>
+  <Accordion title="browser_assert">
+    **Verify page state with structured checks**
+    
+    ```typescript
+    {
+      checks: [
+        { kind: "url_is", value: "https://example.com/dashboard" },
+        { kind: "text_visible", text: "Welcome" },
+        { kind: "selector_exists", selector: ".success" },
+        { kind: "selector_visible", selector: "#modal" },
+        { kind: "selector_value", selector: "input[name='email']", value: "user@example.com" },
+        { kind: "selector_checked", selector: "input[type='checkbox']", checked: true },
+        { kind: "no_js_errors", sinceActionId: 123 },
+        { kind: "no_network_errors", sinceActionId: 123 }
+      ]
+    }
+    ```
+    
+    Returns:
+    - Per-check PASS/FAIL status
+    - Actual vs. expected values
+    - Agent hint (what to do if checks fail)
+  </Accordion>
+  
+  <Accordion title="browser_screenshot">
+    **Capture a screenshot**
+    
+    ```typescript
+    {
+      selector?: string,        // Crop to element
+      fullPage?: boolean,
+      quality?: number,         // 1-100 (JPEG only)
+      type?: "png" | "jpeg"
+    }
+    ```
+    
+    Returns base64-encoded image.
+  </Accordion>
+  
+  <Accordion title="browser_get_console_logs">
+    **Get buffered console messages**
+    
+    ```typescript
+    {
+      sinceActionId?: number,   // Only logs since this action
+      level?: "log" | "info" | "warn" | "error" | "debug",
+      filter?: string           // Regex filter
+    }
+    ```
+    
+    Returns console messages with timestamps, types, and page IDs.
+  </Accordion>
+  
+  <Accordion title="browser_get_network_logs">
+    **Get buffered network requests**
+    
+    ```typescript
+    {
+      sinceActionId?: number,
+      filter?: string,          // Filter by URL (regex)
+      failedOnly?: boolean
+    }
+    ```
+    
+    Returns network requests with:
+    - Method, URL, status
+    - Resource type
+    - Failure details (if any)
+    - Response body (for 4xx/5xx, truncated to 2000 chars)
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Ref-based vs. Selector-based Actions
+
+Browser Tools supports two ways to target elements:
+
+### 1. Ref-based (Recommended)
+
+**Best for:** Dynamic UIs, SPAs, pages with unstable selectors
+
+```typescript
+// Step 1: Create refs
+await browser_snapshot_refs({ mode: "form" });
+// Returns: @e1, @e2, @e3...
+
+// Step 2: Use refs in actions
+await browser_click({ ref: "@e1" });
+await browser_fill({ ref: "@e2", value: "test@example.com" });
+```
+
+**Why refs are resilient:**
+- Path-based resolution (DOM index)
+- Selector hints (id, aria-label, CSS path)
+- Role + name matching
+- Structural fingerprinting (content hash + child tags)
+
+**Refs auto-invalidate on navigation or DOM changes** — call `browser_snapshot_refs` again to refresh.
+
+### 2. Selector-based
+
+**Best for:** Static pages, stable IDs, quick one-off actions
+
+```typescript
+await browser_click({ selector: "#submit-button" });
+await browser_fill({ selector: "input[name='email']", value: "test@example.com" });
+```
+
+<Warning>
+Selectors can break if the page structure changes. Use refs for production verification workflows.
+</Warning>
+
+---
+
+## Snapshot Modes
+
+Control which elements are included in accessibility trees and ref snapshots:
+
+| Mode | What it includes |
+|------|------------------|
+| `form` | Inputs, buttons, labels, form controls |
+| `dialog` | Dialog containers + all interactive children |
+| `navigation` | Links, buttons, navigation landmarks |
+| `errors` | Alert/error/warning elements |
+| `visible_only` | All visible elements (no filter) |
+| (default) | All interactive elements |
+
+**Example:**
+
+```typescript
+// Get only form elements
+await browser_snapshot_refs({ mode: "form" });
+
+// Get only navigation links
+await browser_get_accessibility_tree({ mode: "navigation" });
+
+// Get all visible elements
+await browser_snapshot_refs({ mode: "visible_only", limit: 100 });
+```
+
+---
+
+## Adaptive Settling
+
+Browser Tools uses **adaptive settling** after actions instead of blocking `networkidle`:
+
+**How it works:**
+1. Wait for `domcontentloaded` (fast baseline)
+2. Poll for activity:
+   - DOM mutations (via MutationObserver)
+   - URL changes
+   - Critical network requests (document/fetch/xhr)
+   - Focus changes (if `checkFocusStability: true`)
+3. When quiet for 100ms → settled
+4. Fallback timeout: 500ms (configurable)
+
+**Why not `networkidle`?**
+- Modern SPAs have long-polling, websockets, analytics beacons that never settle
+- `networkidle` can block for 30+ seconds on pages with background requests
+- Adaptive settling focuses on user-visible activity
+
+---
+
+## Console, Network, Dialog Logs
+
+Browser Tools buffers all console messages, network requests, and JS dialogs in memory.
+
+**Automatic surfacing:**
+- Recent errors/warnings appended to action results (last 12 seconds, same origin)
+- Full diagnostics available via `browser_get_console_logs` / `browser_get_network_logs`
+
+**Auto-handled dialogs:**
+- `alert`, `confirm`, `prompt`, `beforeunload` — auto-accepted to prevent freezes
+- Dialog text logged to `dialogLogs` array
+
+**Example:**
+
+```typescript
+// Get all console errors since action 123
+await browser_get_console_logs({ sinceActionId: 123, level: "error" });
+
+// Get failed network requests
+await browser_get_network_logs({ failedOnly: true });
+```
+
+---
+
+## Screenshots & Artifacts
+
+**Screenshot constraints:**
+- Max dimension: 1568px (Anthropic API limit safety)
+- Auto-downscaling if larger (via browser canvas, zero dependencies)
+- JPEG for viewport (smaller), PNG for element crops (transparency)
+
+**Artifacts location:** `.artifacts/browser/`
+
+```
+.artifacts/browser/
+  2026-03-13T12-34-56-789-session/
+    session.har                   # Network traffic (minimal mode)
+    screenshot-1234567890.jpeg    # Timestamped screenshots
+    trace-feature-test.zip        # Playwright traces (if enabled)
+```
+
+**HAR recording:**
+- Enabled by default (minimal mode, omit response bodies)
+- Path: `.artifacts/browser/<session>/session.har`
+- Useful for debugging network issues
+
+---
+
+## Multi-Page / Tab Management
+
+Browser Tools tracks all pages (tabs) in a registry:
+
+```typescript
+// List all open pages
+await browser_list_pages();
+// Returns: [{ id, title, url, opener }]
+
+// Switch to a different page
+await browser_switch_page({ pageId: 2 });
+
+// Close a page
+await browser_close_page({ pageId: 3 });
+```
+
+**Auto-registration:**
+- New tabs from `window.open()`, `target="_blank"`, or popups are auto-registered
+- Opener page ID tracked for context
+
+---
+
+## Frame Support
+
+Browser Tools supports iframe and frame interaction:
+
+```typescript
+// Select a frame by name or URL
+await browser_select_frame({ name: "payment-iframe" });
+
+// Or by CSS selector
+await browser_select_frame({ selector: "iframe#payment" });
+
+// Return to main page
+await browser_select_frame({ main: true });
+```
+
+**After selecting a frame:**
+- All actions (click, fill, snapshot) target the selected frame
+- Accessibility trees scoped to the frame
+- Frame context preserved until explicitly switched
+
+---
+
+## Wait Strategies
+
+**Built-in smart waits:**
+- Actions auto-wait for elements to be visible and enabled
+- Adaptive settling after navigation/clicks
+- Configurable timeouts
+
+**Explicit waits:**
+
+```typescript
+// Wait for selector
+await browser_wait({ selector: ".success-message", timeout: 5000 });
+
+// Wait for navigation
+await browser_navigate({ url: "...", waitUntil: "networkidle" });
+
+// Wait via assertions
+await browser_assert({
+  checks: [
+    { kind: "selector_visible", selector: ".loaded" }
+  ]
+});
+```
+
+---
+
+## Error Handling
+
+Browser Tools provides rich error context:
+
+**On failure:**
+- Screenshot (JPEG, 60% quality)
+- Console errors (last 12 seconds)
+- Network errors (last 12 seconds)
+- Action timeline (last 60 actions)
+- Failure hypothesis (suggested cause)
+
+**Example error output:**
+
+```
+Error: Element not found: @e5
+
+Reason: Ref @e5 could not be resolved (path no longer valid). 
+The ref is likely stale after DOM/navigation changes. 
+Call browser_snapshot_refs again to refresh refs.
+
+Screenshot: [base64 JPEG]
+
+Recent warnings:
+  JS: TypeError: Cannot read property 'value' of null
+  Network: GET /api/data 500
+```
+
+---
+
+## Environment Variables
+
+| Variable | Purpose |
+|----------|----------|
+| `BROWSER_PATH` | Custom Chromium executable path (optional) |
+
+**No API keys required.** Playwright bundles Chromium.
+
+---
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use refs for resilient automation">
+    Refs survive minor DOM changes via multi-tier resolution:
+    1. Path-based (DOM index)
+    2. Selector hints (id, aria-label)
+    3. Role + name matching
+    4. Structural fingerprinting
+    
+    Selectors break if IDs or classes change.
+  </Accordion>
+  
+  <Accordion title="Scope snapshots with modes">
+    Don't snapshot the entire page if you only need form elements:
+    
+    ```typescript
+    // Good: Only form elements
+    browser_snapshot_refs({ mode: "form", limit: 20 });
+    
+    // Bad: Everything (hundreds of refs)
+    browser_snapshot_refs({ limit: 500 });
+    ```
+  </Accordion>
+  
+  <Accordion title="Use digest tools over raw output">
+    - `browser_assert` — Structured checks instead of manual parsing
+    - Compact page summary — Returned by default after actions
+    - `browser_find` — Quick element discovery without full refs
+  </Accordion>
+  
+  <Accordion title="Refresh refs after navigation">
+    Refs become stale after navigation or major DOM changes:
+    
+    ```typescript
+    await browser_navigate({ url: "..." });
+    await browser_snapshot_refs({ mode: "form" }); // Refresh!
+    await browser_fill({ ref: "@e1", value: "..." });
+    ```
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Example: Login Flow
+
+```typescript
+// Navigate to login page
+await browser_navigate({ 
+  url: "https://example.com/login",
+  screenshot: true 
+});
+
+// Create refs for form elements
+await browser_snapshot_refs({ mode: "form" });
+// Returns: @e1 (email input), @e2 (password input), @e3 (submit button)
+
+// Fill form
+await browser_fill({ ref: "@e1", value: "user@example.com" });
+await browser_fill({ ref: "@e2", value: "password123" });
+
+// Submit
+await browser_click({ ref: "@e3" });
+
+// Verify success
+await browser_assert({
+  checks: [
+    { kind: "url_contains", value: "/dashboard" },
+    { kind: "text_visible", text: "Welcome" },
+    { kind: "no_js_errors" }
+  ]
+});
+```
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Search Tools" icon="magnifying-glass" href="/extensions/search-tools">
+    Web search and documentation access
+  </Card>
+  
+  <Card title="Background Shell" icon="terminal" href="/extensions/background-shell">
+    Long-running process management
+  </Card>
+  
+  <Card title="Bundled Extensions" icon="boxes-stacked" href="/extensions/bundled-extensions">
+    All 13 bundled extensions
+  </Card>
+</CardGroup>

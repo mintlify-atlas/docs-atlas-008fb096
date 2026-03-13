@@ -1,0 +1,366 @@
+---
+title: Migration from v1
+description: How to migrate .planning directories from the original Get Shit Done to GSD 2 format
+---
+
+If you have projects with `.planning` directories from the original Get Shit Done (v1), you can migrate them to GSD 2's `.gsd` format using the built-in migration tool.
+
+## What Changed
+
+The original GSD was a collection of markdown prompts installed into `~/.claude/commands/`. GSD 2 is a TypeScript application that controls the agent session programmatically.
+
+| Aspect | v1 (.planning) | v2 (.gsd) |
+|--------|----------------|----------|
+| **Structure** | `phases/`, loose files | `milestones/M001/`, structured hierarchy |
+| **Work units** | Phases → Plans | Milestones → Slices → Tasks |
+| **Completion tracking** | `[x]` in ROADMAP.md | `done: true` in YAML frontmatter |
+| **Research** | `phases/<phase>/research/` | `M001-RESEARCH.md` (consolidated) |
+| **Summaries** | `phases/<phase>/plans/<plan>/summary.md` | `T01-SUMMARY.md` with YAML frontmatter |
+| **Requirements** | `REQUIREMENTS.md` (bullet list) | `REQUIREMENTS.md` (structured YAML) |
+
+<Note>
+  Migration works best with a `ROADMAP.md` file for milestone structure. Without one, milestones are inferred from the `phases/` directory.
+</Note>
+
+## Quick Start
+
+```bash
+# From within the project directory
+/gsd migrate
+
+# Or specify a path
+/gsd migrate ~/projects/my-old-project
+```
+
+The migration tool:
+- Parses your old `PROJECT.md`, `ROADMAP.md`, `REQUIREMENTS.md`, phase directories, plans, summaries, and research
+- Maps phases → slices, plans → tasks, milestones → milestones
+- Preserves completion state (`[x]` phases stay done, summaries carry over)
+- Consolidates research files into the new structure
+- Shows a preview before writing anything
+- Optionally runs an agent-driven review of the output for quality assurance
+
+## Migration Flow
+
+<Steps>
+  <Step title="Validate source directory">
+    The tool checks for:
+    
+    - `PROJECT.md` exists
+    - `ROADMAP.md` exists (optional but recommended)
+    - `phases/` directory structure is well-formed
+    - Plan files have valid YAML frontmatter
+    - No duplicate phase numbers within milestones
+    
+    Warnings are shown but don't block migration. Fatal errors stop the process.
+  </Step>
+
+  <Step title="Parse the .planning directory">
+    Reads and structures:
+    
+    - **PROJECT.md** — title, description, tech stack
+    - **ROADMAP.md** — milestones with nested phases
+    - **REQUIREMENTS.md** — user requirements (bullet list → structured YAML)
+    - **phases/** — all phase directories, plan files, summaries, research
+    - **quick-tasks.md** — optional task list
+    
+    Supports format variations:
+    - Milestone-sectioned roadmaps with `<details>` blocks
+    - Bold phase entries
+    - Bullet-format requirements
+    - Decimal phase numbering (1.1, 1.2)
+    - Duplicate phase numbers across milestones
+  </Step>
+
+  <Step title="Transform to GSD 2 structure">
+    **Milestone mapping:**
+    - Each roadmap milestone becomes a GSD milestone (`M001`, `M002`, ...)
+    - Milestone title from `## Milestone N:` headers
+    - Phases within the milestone become slices
+    
+    **Slice mapping:**
+    - Each phase becomes a slice (`S01`, `S02`, ...)
+    - Slice title from phase title or inferred from phase ID
+    - `[x]` completion status preserved as `done: true`
+    - Plans within the phase become tasks
+    
+    **Task mapping:**
+    - Each plan becomes a task (`T01`, `T02`, ...)
+    - Task title from `phase plan` frontmatter or plan objective
+    - Must-haves from `must_haves.truths` in plan frontmatter
+    - Files modified from `files_modified` frontmatter
+    - Summary data from `summary.md` if present
+    
+    **Research consolidation:**
+    - All research files in `phases/<phase>/research/` are merged
+    - Preferred order: `SUMMARY.md`, `ARCHITECTURE.md`, `STACK.md`, `FEATURES.md`, `PITFALLS.md`
+    - Written to `M001-RESEARCH.md`
+    
+    **Requirements transformation:**
+    - Bullet-list requirements → structured YAML entries
+    - Preserves validation status, priority, tags
+    - `active` status inferred from position and context
+  </Step>
+
+  <Step title="Preview">
+    Shows:
+    
+    ```
+    Milestones: 3
+    Slices: 12 (8 done — 67%)
+    Tasks: 47 (32 done — 68%)
+    Requirements: 15 (10 validated, 12 active, 3 deferred)
+    ```
+    
+    If a `.gsd` directory already exists, a warning is shown that it will be overwritten.
+  </Step>
+
+  <Step title="Confirm and write">
+    Writes:
+    
+    - `PROJECT.md` — migrated project description
+    - `DECISIONS.md` — empty (you'll populate this during work)
+    - `REQUIREMENTS.md` — structured YAML
+    - `milestones/M001/`
+      - `M001-ROADMAP.md` — slice breakdown with checkboxes
+      - `M001-CONTEXT.md` — empty (for discuss phase)
+      - `M001-RESEARCH.md` — consolidated research
+      - `slices/S01/`
+        - `S01-PLAN.md` — task list with must-haves
+        - `tasks/T01/`
+          - `T01-PLAN.md` — task plan
+          - `T01-SUMMARY.md` — YAML frontmatter + narrative (if done)
+    
+    All completion states are preserved. Done tasks have summaries, pending tasks don't.
+  </Step>
+
+  <Step title="Optional: Agent review">
+    After writing, you can request an agent-driven review:
+    
+    The agent audits:
+    - **Structure** — all expected files present, proper hierarchy
+    - **Content quality** — titles, descriptions, must-haves are clear
+    - **Round-trip fidelity** — `deriveState()` reads back correctly
+    - **Requirement statuses** — validated/active/deferred are sensible
+    
+    The agent fixes minor issues in-place and reports PASS/FAIL per category.
+  </Step>
+</Steps>
+
+## Example: Before and After
+
+### Before (v1 .planning)
+
+```
+.planning/
+├── PROJECT.md
+├── ROADMAP.md
+├── REQUIREMENTS.md
+└── phases/
+    ├── 1-1/
+    │   ├── research/
+    │   │   ├── ARCHITECTURE.md
+    │   │   └── SUMMARY.md
+    │   └── plans/
+    │       ├── 1/
+    │       │   ├── plan.md
+    │       │   └── summary.md
+    │       └── 2/
+    │           └── plan.md
+    └── 1-2/
+        └── plans/
+            └── 1/
+                └── plan.md
+```
+
+**ROADMAP.md:**
+```markdown
+## Milestone 1: MVP
+
+- [x] **1.1** — Data model
+- [ ] **1.2** — API endpoints
+```
+
+**phases/1-1/plans/1/plan.md:**
+```yaml
+---
+phase: 1.1
+plan: 1
+objective: Core types and interfaces
+files_modified:
+  - src/types.ts
+must_haves:
+  truths:
+    - Types exist and are exported
+---
+
+Implement the core type system...
+```
+
+### After (v2 .gsd)
+
+```
+.gsd/
+├── PROJECT.md
+├── DECISIONS.md
+├── REQUIREMENTS.md
+└── milestones/
+    └── M001/
+        ├── M001-ROADMAP.md
+        ├── M001-CONTEXT.md
+        ├── M001-RESEARCH.md
+        └── slices/
+            ├── S01/
+            │   ├── S01-PLAN.md
+            │   └── tasks/
+            │       ├── T01/
+            │       │   ├── T01-PLAN.md
+            │       │   └── T01-SUMMARY.md
+            │       └── T02/
+            │           └── T02-PLAN.md
+            └── S02/
+                └── ...
+```
+
+**M001-ROADMAP.md:**
+```markdown
+---
+milestone: M001
+title: MVP
+version: 1
+---
+
+# Milestone M001: MVP
+
+- [x] **S01** — Data model
+- [ ] **S02** — API endpoints
+```
+
+**T01-PLAN.md:**
+```yaml
+---
+slice: S01
+task: T01
+title: 1.1 1
+done: true
+files:
+  - src/types.ts
+---
+
+# Task T01: Core types and interfaces
+
+Implement the core type system...
+
+## Must-Haves
+
+- Types exist and are exported
+```
+
+**T01-SUMMARY.md** (auto-generated from old summary):
+```yaml
+---
+slice: S01
+task: T01
+completed: 2024-01-15T10:30:00Z
+provides:
+  - Core type definitions
+key_files:
+  - src/types.ts
+duration: 45min
+---
+
+Implemented TypeScript interfaces for...
+```
+
+## What Gets Preserved
+
+✅ **Preserved:**
+- Completion status (`[x]` → `done: true`)
+- Summary narratives (moved to `T01-SUMMARY.md` body)
+- Must-haves (moved to `T01-PLAN.md`)
+- Files modified (moved to `files:` in task plan frontmatter)
+- Research content (consolidated)
+- Requirements (transformed to YAML)
+- Milestone structure and titles
+
+❌ **Not preserved:**
+- Activity logs (`.planning/activity/` — runtime artifacts, not migrated)
+- Old state files (`.planning/state.md` — recomputed from `.gsd/`)
+- Loose notes that aren't in structured files
+
+## Format Variations Supported
+
+The migration parser handles:
+
+- **Decimal phase numbering**: `1.1`, `1.2`, `2.1` → `S01`, `S02`, `S03`
+- **Duplicate phase numbers across milestones**: M1 has phase 1, M2 has phase 1 → both become `S01` within their milestone
+- **Bold phase markers**: `- [x] **1.1** — Title` or `- [x] 1.1 — Title`
+- **Details blocks**: `<details><summary>Milestone 1</summary>...phases...</details>`
+- **Bullet requirements**: `- [ ] User can sign up` → structured YAML
+- **Missing frontmatter fields**: Infers titles, IDs, and defaults where possible
+
+## Post-Migration
+
+After migration:
+
+1. **Verify the output**: Run `/gsd status` to see the migrated state
+2. **Run auto-mode**: `/gsd auto` picks up where v1 left off
+3. **Optionally review**: The agent can audit the migration output
+
+<Warning>
+  Migration is **one-way**. The `.planning` directory is read, not modified. The `.gsd` directory is written fresh. Keep a backup of your `.planning` directory if you want to preserve the original.
+</Warning>
+
+## Troubleshooting
+
+### "Directory not found"
+
+Ensure the path contains a `.planning/` directory. If you're in the project root:
+
+```bash
+/gsd migrate     # Looks for .planning/ in current directory
+```
+
+If `.planning` is elsewhere:
+
+```bash
+/gsd migrate ~/projects/old-project/.planning
+```
+
+### "Migration blocked — fix fatal issues"
+
+Fatal errors stop migration. Common issues:
+
+- Missing `PROJECT.md`
+- Malformed YAML frontmatter in plan files
+- Circular dependencies in phase summaries
+
+Fix the issues in the `.planning` directory, then re-run `/gsd migrate`.
+
+### "A .gsd directory already exists"
+
+Migration overwrites `.gsd/`. If you want to preserve existing work:
+
+```bash
+mv .gsd .gsd.backup
+/gsd migrate
+```
+
+## Related Files
+
+- `migrate/command.ts:78` — CLI handler and confirmation flow
+- `migrate/parser.ts` — Parses `.planning` directory structure
+- `migrate/transformer.ts` — Maps v1 → v2 structure
+- `migrate/validator.ts` — Pre-migration checks
+- `migrate/writer.ts` — Writes `.gsd/` files
+
+## See Also
+
+<CardGroup cols={2}>
+  <Card title="Getting Started" icon="rocket" href="/quickstart">
+    Start a fresh GSD 2 project
+  </Card>
+  <Card title="Verification" icon="check" href="/advanced/verification">
+    How GSD validates work
+  </Card>
+</CardGroup>

@@ -1,0 +1,262 @@
+---
+title: "gsd migrate"
+description: "Migrate from GSD 1 (.planning) to GSD 2 (.gsd)"
+---
+
+## Overview
+
+The `/gsd migrate` command converts projects from the legacy `.planning/` directory structure (GSD 1) to the modern `.gsd/` format (GSD 2). It preserves all milestones, slices, tasks, requirements, and decisions while upgrading to the new file naming conventions and metadata structure.
+
+<Warning>
+This command is for migrating **existing** GSD 1 projects. If you're starting a new project, use `/gsd` to create a fresh GSD 2 project instead.
+</Warning>
+
+## Syntax
+
+```bash
+/gsd migrate [path]
+```
+
+<ParamField path="path" type="string" default=".">
+  Path to the directory containing a `.planning/` folder. Can be:
+  - `.` (current directory, default)
+  - Relative path: `./old-project`
+  - Absolute path: `/home/user/projects/my-app`
+  - Home-relative: `~/projects/my-app`
+</ParamField>
+
+## Migration Process
+
+The migration runs through four phases:
+
+### 1. Validation
+
+Scans the `.planning/` directory for:
+- Valid milestone structure (M### directories)
+- Required files (roadmaps, plans)
+- Parseable frontmatter
+- Completion state consistency
+
+**Fatal issues block migration:**
+- Corrupted YAML frontmatter
+- Missing critical files (PROJECT.md, roadmaps)
+- Invalid milestone/slice ID patterns
+
+**Warnings allow migration but flag issues:**
+- Missing task summaries
+- Unchecked completion boxes
+- Empty content sections
+
+### 2. Transformation
+
+Converts the structure to GSD 2 format:
+
+- **File naming**: `slice-plan.md` → `S01-PLAN.md`
+- **Frontmatter**: Upgrades metadata fields
+- **Paths**: Updates cross-references
+- **Requirements**: Converts status tracking
+- **Decisions**: Preserves DECISIONS.md
+
+### 3. Preview
+
+Shows what will be created:
+
+```
+Milestones: 3
+Slices: 12 (8 done — 67%)
+Tasks: 45 (32 done — 71%)
+Requirements: 15 (8 validated, 5 active, 2 deferred)
+
+⚠ A .gsd directory already exists in the current working directory — it will be overwritten.
+```
+
+### 4. Writing
+
+Creates the `.gsd/` directory structure:
+
+```
+.gsd/
+├── PROJECT.md
+├── DECISIONS.md
+├── QUEUE.md
+├── REQUIREMENTS.md
+├── STATE.md
+└── milestones/
+    ├── M001/
+    │   ├── M001-ROADMAP.md
+    │   ├── S01/
+    │   │   ├── S01-PLAN.md
+    │   │   ├── S01-SUMMARY.md (if completed)
+    │   │   └── tasks/
+    │   │       ├── T01-PLAN.md
+    │   │       └── T01-SUMMARY.md (if completed)
+    │   └── ...
+    └── ...
+```
+
+## Examples
+
+### Migrate Current Directory
+
+```bash
+/gsd migrate
+```
+
+Looks for `.planning/` in the current directory and migrates to `.gsd/`.
+
+### Migrate Specific Directory
+
+```bash
+/gsd migrate /home/user/old-project
+```
+
+Migrates `/home/user/old-project/.planning/` to `/home/user/old-project/.gsd/`.
+
+### Migrate with Tilde Path
+
+```bash
+/gsd migrate ~/projects/legacy-app
+```
+
+Expands `~` to your home directory.
+
+## Validation Errors
+
+### Fatal: Missing PROJECT.md
+
+```
+✖ PROJECT.md not found or not parseable (.planning/PROJECT.md)
+Migration blocked — fix the fatal issues above before retrying.
+```
+
+**Fix:** Ensure `.planning/PROJECT.md` exists and has valid YAML frontmatter.
+
+### Fatal: Invalid Frontmatter
+
+```
+✖ Milestone M002 roadmap has invalid frontmatter (.planning/milestones/M002/roadmap.md)
+Migration blocked — fix the fatal issues above before retrying.
+```
+
+**Fix:** Check YAML syntax in the specified file. Common issues:
+- Missing `---` delimiters
+- Indentation errors
+- Invalid YAML syntax
+
+### Warning: Missing Artifacts
+
+```
+⚠ Task T03 is marked done but summary is missing (.planning/milestones/M001/S02/tasks/T03-summary.md)
+```
+
+**Action:** Migration proceeds but the issue is noted. You may want to create the missing summary after migration.
+
+## Post-Migration Review
+
+After writing files, you're offered an optional agent-driven review:
+
+```
+Migration written
+
+45 files written to .gsd/
+
+The agent can now review the migrated output against GSD-2 standards —
+checking structure, content quality, deriveState() round-trip, and
+requirement statuses. It will fix minor issues in-place.
+
+  Review migration — Agent audits the .gsd output and reports PASS/FAIL per category
+  Skip review — Trust the migration output as-is
+```
+
+### Review Checks
+
+The agent verifies:
+
+1. **Structure**: All expected files present, naming correct
+2. **Content**: Frontmatter complete, content sections filled
+3. **State consistency**: STATE.md matches disk state
+4. **Requirements**: All requirements properly tracked
+5. **Completion**: Done flags match artifact presence
+
+<Tip>
+Always run the post-migration review. It catches subtle issues that automated validation might miss.
+</Tip>
+
+## What Gets Migrated
+
+### Preserved
+
+- All milestone/slice/task structure
+- Completion state (done/in-progress)
+- Requirements and their status
+- Decisions log
+- Project metadata
+- Task plans and summaries
+- Slice plans and summaries
+- Frontmatter fields
+
+### Transformed
+
+- **File names**: Legacy names → GSD 2 conventions
+- **Directory structure**: Flat tasks/ → organized by type
+- **Cross-references**: Updated to new paths
+- **Frontmatter keys**: Normalized to GSD 2 schema
+
+### Not Migrated
+
+- `.planning/` directory is left intact (not deleted)
+- Legacy `continue.md` files (not part of GSD 2)
+- Custom scripts or tools
+- Git history (migration creates new files)
+
+## Rollback
+
+If migration produces unexpected results:
+
+1. Delete the `.gsd/` directory
+2. Fix any issues in `.planning/`
+3. Re-run `/gsd migrate`
+
+The `.planning/` directory is never modified during migration.
+
+## Safety
+
+<Warning>
+Migration **overwrites** an existing `.gsd/` directory. Back up your work if you have local changes.
+</Warning>
+
+### Before Migration
+
+1. Commit or stash any changes in `.gsd/` (if it exists)
+2. Ensure `.planning/` is in a good state
+3. Run `/gsd migrate` in a test environment first
+
+### After Migration
+
+1. Review the output carefully
+2. Run `/gsd doctor` to verify structure
+3. Check a few files manually
+4. Test with `/gsd status` or `/gsd next`
+
+## Performance
+
+Migration is fast:
+
+- Small projects (1-2 milestones): < 1 second
+- Medium projects (5-10 milestones): 1-3 seconds
+- Large projects (20+ milestones): 3-10 seconds
+
+## Compatibility
+
+Migrates from:
+- GSD 1.x (`.planning/` format)
+- Legacy Pi Coding Agent projects
+
+Migrates to:
+- GSD 2.x (`.gsd/` format)
+- Compatible with all GSD 2 commands and workflows
+
+## Related Commands
+
+- [/gsd doctor](/commands/gsd-doctor) - Verify migration output
+- [/gsd status](/commands/gsd-status) - View migrated project state

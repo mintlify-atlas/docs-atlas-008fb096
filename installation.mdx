@@ -1,0 +1,382 @@
+---
+title: Installation
+description: Install GSD 2 and configure your LLM provider
+---
+
+## Install GSD
+
+GSD is distributed as a global npm package. Install it using your preferred package manager:
+
+<CodeGroup>
+
+```bash npm
+npm install -g gsd-pi
+```
+
+```bash yarn
+yarn global add gsd-pi
+```
+
+```bash pnpm
+pnpm add -g gsd-pi
+```
+
+</CodeGroup>
+
+<Note>
+  The package name is `gsd-pi` (not just `gsd`) because it's built on the Pi SDK.
+</Note>
+
+## System Requirements
+
+<CardGroup cols={2}>
+  <Card title="Node.js" icon="node-js">
+    **Version ≥ 20.6.0** (22+ recommended)
+    
+    Check your version:
+    ```bash
+    node --version
+    ```
+  </Card>
+  
+  <Card title="Git" icon="git-alt">
+    Required for version control
+    
+    GSD will initialize git automatically if missing in your project
+  </Card>
+</CardGroup>
+
+### Platform Support
+
+- **Linux** — Full support
+- **macOS** — Full support (includes voice transcription via `/voice`)
+- **Windows** — Full support via WSL2 or native
+
+## First Launch Setup
+
+On first run, GSD launches a branded setup wizard that walks you through configuration:
+
+<Steps>
+  <Step title="Run GSD">
+    Open a terminal and run:
+    ```bash
+    gsd
+    ```
+  </Step>
+  
+  <Step title="Select Your LLM Provider">
+    Choose from 20+ providers:
+    - **Anthropic** (Claude Opus, Sonnet)
+    - **OpenAI** (GPT-4, o1)
+    - **Google** (Gemini)
+    - **OpenRouter** (access hundreds of models)
+    - **GitHub Copilot**
+    - **Amazon Bedrock**, **Azure OpenAI**, **Google Vertex**
+    - And more...
+  </Step>
+  
+  <Step title="Authenticate">
+    Depending on your provider:
+    
+    **OAuth Flow** (Claude Max, Codex, GitHub Copilot):
+    - GSD handles the OAuth flow automatically
+    - No API key needed
+    
+    **API Key**:
+    - Paste your API key when prompted
+    - Keys are stored securely in `~/.gsd/auth.json`
+  </Step>
+  
+  <Step title="Optional: Configure Tool APIs" icon="wrench">
+    Enhance GSD's research capabilities (all skippable):
+    - **Brave Search** — Web research
+    - **Tavily** — Alternative web research
+    - **Google Gemini** — Web search with AI synthesis
+    - **Context7** — Up-to-date library/framework docs
+    - **Jina** — Page extraction
+    - **Slack/Discord** — Remote notifications
+    
+    Press Enter to skip any step.
+  </Step>
+</Steps>
+
+<Note>
+  If you have an existing Pi installation, your provider credentials are imported automatically.
+</Note>
+
+## Verify Installation
+
+Check that GSD is installed correctly:
+
+<CodeGroup>
+
+```bash Version Check
+gsd --version
+```
+
+```bash Help Menu
+gsd --help
+```
+
+</CodeGroup>
+
+You should see output like:
+
+```bash
+GSD v2.5.1 — Get Shit Done
+
+Usage: gsd [options] [message...]
+
+Options:
+  --mode <text|json|rpc>   Output mode (default: interactive)
+  --print, -p              Single-shot print mode
+  --model <id>             Override model (e.g. claude-opus-4-6)
+  --no-session             Disable session persistence
+  --extension <path>       Load additional extension
+  --tools <a,b,c>          Restrict available tools
+  --version, -v            Print version and exit
+  --help, -h               Print this help and exit
+
+Subcommands:
+  config                   Re-run the setup wizard
+```
+
+## Re-running Setup
+
+Need to change your LLM provider or add API keys later?
+
+```bash
+gsd config
+```
+
+This re-runs the setup wizard. You can update:
+- LLM provider and credentials
+- Tool API keys (Brave, Context7, etc.)
+- Any configuration skipped during first launch
+
+## Configuration Files
+
+GSD stores configuration in `~/.gsd/`:
+
+```bash
+~/.gsd/
+  auth.json              # Provider credentials (OAuth tokens, API keys)
+  preferences.md         # Global preferences (models, timeouts, budgets)
+  agent/                 # Bundled extensions and agents
+  sessions/              # Session history per project
+```
+
+<Warning>
+  **Never commit `~/.gsd/auth.json`** — it contains sensitive credentials.
+</Warning>
+
+## Model Selection
+
+After login, GSD auto-selects a default model. To change models:
+
+### During a Session
+
+Press `Ctrl+P` to cycle through available models, or use:
+
+```bash
+/model
+```
+
+This opens the model selector with all available models from your configured providers.
+
+### Set Default Model
+
+GSD automatically selects the best available Anthropic model on first launch. To change the default permanently, update your preferences:
+
+```bash
+gsd
+/gsd prefs
+```
+
+Edit the `models` section:
+
+```yaml
+models:
+  research: claude-sonnet-4-6
+  planning: claude-opus-4-6
+  execution: claude-sonnet-4-6
+  completion: claude-sonnet-4-6
+```
+
+<Tip>
+  Use expensive models where quality matters (planning), cheaper models where speed matters (research).
+</Tip>
+
+## Using OpenRouter
+
+[OpenRouter](https://openrouter.ai) gives you access to hundreds of models through a single API key:
+
+<Steps>
+  <Step title="Get an OpenRouter API Key">
+    Sign up at [openrouter.ai](https://openrouter.ai) and generate an API key.
+  </Step>
+  
+  <Step title="Select OpenRouter During Setup">
+    When GSD's setup wizard asks for your provider, choose **OpenRouter**.
+  </Step>
+  
+  <Step title="Configure Models">
+    Use any OpenRouter-supported model:
+    ```yaml
+    models:
+      research: openrouter/deepseek/deepseek-r1
+      planning: openrouter/anthropic/claude-opus-4
+      execution: openrouter/meta-llama/llama-3.3-70b
+      completion: openrouter/qwen/qwen-2.5-72b
+    ```
+  </Step>
+</Steps>
+
+## Using Claude Max / GitHub Copilot
+
+If you have a **Claude Max**, **Codex**, or **GitHub Copilot** subscription:
+
+<Steps>
+  <Step title="Select Your Provider">
+    Choose **Anthropic** (for Claude Max) or **GitHub Copilot** during setup.
+  </Step>
+  
+  <Step title="Complete OAuth Flow">
+    GSD opens your browser to complete authentication. No API key needed.
+  </Step>
+  
+  <Step title="Start Using GSD">
+    Your subscription usage is tracked through your provider's billing.
+  </Step>
+</Steps>
+
+<Note>
+  OAuth credentials are stored locally in `~/.gsd/auth.json` and never transmitted except to the provider's authentication servers.
+</Note>
+
+## Optional: Tool API Keys
+
+Enhance GSD's capabilities with optional tool APIs:
+
+### Brave Search (Recommended)
+
+Enables web research for current documentation and best practices.
+
+1. Get a free API key: [brave.com/search/api](https://brave.com/search/api)
+2. Run `gsd config` and add it when prompted
+3. Set in environment: `export BRAVE_API_KEY=your-key`
+
+### Context7
+
+Provides up-to-date library and framework documentation.
+
+1. Get an API key: [context7.com](https://context7.com)
+2. Run `gsd config` and add it when prompted
+3. Set in environment: `export CONTEXT7_API_KEY=your-key`
+
+### Jina AI
+
+Enhances web page extraction and reading.
+
+1. Get an API key: [jina.ai](https://jina.ai)
+2. Run `gsd config` and add it when prompted
+3. Set in environment: `export JINA_API_KEY=your-key`
+
+### Google Gemini (for Search)
+
+Enables Gemini-powered web search with AI-synthesized answers.
+
+1. Get an API key: [makersuite.google.com/app/apikey](https://makersuite.google.com/app/apikey)
+2. Run `gsd config` and add it when prompted
+3. Set in environment: `export GOOGLE_API_KEY=your-key`
+
+<Tip>
+  All tool APIs are optional. GSD works without them, but research phases are more powerful with web search enabled.
+</Tip>
+
+## Troubleshooting
+
+### "Command not found: gsd"
+
+If `gsd` isn't found after global install:
+
+<CodeGroup>
+
+```bash npm
+# Check npm global bin location
+npm config get prefix
+
+# Add to PATH (Linux/Mac)
+export PATH="$(npm config get prefix)/bin:$PATH"
+
+# Add to PATH (permanently)
+echo 'export PATH="$(npm config get prefix)/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+```bash yarn
+# Check yarn global bin location
+yarn global bin
+
+# Add to PATH
+export PATH="$(yarn global bin):$PATH"
+```
+
+```bash pnpm
+# pnpm automatically adds global bins to PATH
+# If not working, check:
+pnpm root -g
+```
+
+</CodeGroup>
+
+### "Node version not supported"
+
+GSD requires Node.js ≥ 20.6.0:
+
+```bash
+# Check current version
+node --version
+
+# Update using nvm (recommended)
+nvm install 22
+nvm use 22
+
+# Or download from nodejs.org
+```
+
+### "Authentication failed"
+
+If provider authentication fails:
+
+1. **Re-run setup:** `gsd config`
+2. **Check credentials:** Verify API key is valid
+3. **Try different provider:** Switch to a provider you have access to
+4. **Check internet connection:** OAuth flows require network access
+
+### "Extension load error"
+
+If GSD reports extension errors on startup:
+
+```bash
+# Clear cached extensions
+rm -rf ~/.gsd/agent/extensions
+
+# Reinstall GSD
+npm install -g gsd-pi --force
+
+# Launch again
+gsd
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quick Start Guide" icon="rocket" href="/quickstart">
+    Run your first project with GSD
+  </Card>
+  
+  <Card title="Configuration" icon="gear" href="/configuration">
+    Learn about preferences, timeouts, and budgets
+  </Card>
+</CardGroup>

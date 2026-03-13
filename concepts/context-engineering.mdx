@@ -1,0 +1,417 @@
+---
+title: Context Engineering
+description: What files get inlined, why fresh sessions matter, and how GSD optimizes token usage
+---
+
+## The Problem with Accumulated Context
+
+Long agent sessions suffer from **context decay**:
+
+1. **Garbage accumulation** — Failed attempts, outdated plans, irrelevant files
+2. **Quality degradation** — LLM starts summarizing, skipping details, "I'll be more concise"
+3. **No recovery** — Crash mid-task? Start over from scratch.
+
+GSD solves this with **fresh sessions per unit**.
+
+## Fresh Session Per Unit
+
+Every task, research phase, and planning step gets a **clean 200k-token context window**.
+
+From [`auto.ts:1`](https://github.com/gsd-build/GSD-2/blob/main/src/resources/extensions/gsd/auto.ts#L1):
+
+```typescript
+/**
+ * GSD Auto Mode — Fresh Session Per Unit
+ *
+ * State machine driven by .gsd/ files on disk. Each "unit" of work
+ * (plan slice, execute task, complete slice) gets a fresh session via
+ * the stashed ctx.newSession() pattern.
+ *
+ * The extension reads disk state after each agent_end, determines the
+ * next unit type, creates a fresh session, and injects a focused prompt
+ * telling the LLM which files to read and what to do.
+ */
+```
+
+**How it works:**
+
+```typescript
+export async function handleAgentEnd(
+  ctx: ExtensionContext,
+  pi: ExtensionAPI,
+): Promise<void> {
+  if (!active || !cmdCtx) return;
+
+  // Unit completed — clear its timeout
+  clearUnitTimeout();
+
+  // Small delay to let files settle (git commits, file writes)
+  await new Promise(r => setTimeout(r, 500));
+
+  // Auto-commit any dirty files the LLM left behind
+  if (currentUnit) {
+    const commitMsg = autoCommitCurrentBranch(basePath, currentUnit.type, currentUnit.id);
+  }
+
+  // In step mode, pause and show wizard
+  if (stepMode) {
+    await showStepWizard(ctx, pi);
+    return;
+  }
+
+  // In auto mode, immediately dispatch next unit in a FRESH session
+  await dispatchNextUnit(ctx, pi);
+}
+```
+
+<Info>
+  From [`auto.ts:488`](https://github.com/gsd-build/GSD-2/blob/main/src/resources/extensions/gsd/auto.ts#L488) — the session clears between every unit. No accumulated state.
+</Info>
+
+## What Gets Inlined
+
+The dispatch prompt includes:
+
+<CardGroup cols={2}>
+  <Card title="Task Plan" icon="list-check">
+    Full task definition with must-haves and files likely touched
+  </Card>
+  <Card title="Slice Plan" icon="sitemap">
+    Goal, demo criteria, and all tasks in the slice
+  </Card>
+  <Card title="Prior Summaries" icon="clock-rotate-left">
+    Summaries from completed tasks in this slice
+  </Card>
+  <Card title="Dependency Summaries" icon="link">
+    Summaries from other slices this task depends on
+  </Card>
+  <Card title="Roadmap Excerpt" icon="map">
+    Slice list with completion status
+  </Card>
+  <Card title="Decisions Register" icon="book">
+    Architectural decisions from DECISIONS.md
+  </Card>
+</CardGroup>
+
+### Example: Execute Task Prompt
+
+When dispatching `execute-task` for `M001/S01/T02`:
+
+```typescript
+async function buildExecuteTaskPrompt(
+  mid: string,
+  sid: string,
+  sTitle: string,
+  tid: string,
+  tTitle: string,
+  basePath: string,
+): Promise<string> {
+  const parts: string[] = [];
+
+  // 1. Task identity
+  parts.push(`# Execute ${tid}: ${tTitle}`);
+  parts.push(`Slice: ${sid} — ${sTitle}`);
+  parts.push(`Milestone: ${mid}`);
+  parts.push("");
+
+  // 2. Inline task plan
+  const taskPlanFile = resolveTaskFile(basePath, mid, sid, tid, "PLAN");
+  const taskPlanContent = taskPlanFile ? await loadFile(taskPlanFile) : null;
+  if (taskPlanContent) {
+    parts.push("## Task Plan");
+    parts.push(taskPlanContent);
+    parts.push("");
+  }
+
+  // 3. Inline slice plan (for context)
+  const slicePlanFile = resolveSliceFile(basePath, mid, sid, "PLAN");
+  const slicePlanContent = slicePlanFile ? await loadFile(slicePlanFile) : null;
+  if (slicePlanContent) {
+    parts.push("## Slice Plan");
+    parts.push(slicePlanContent);
+    parts.push("");
+  }
+
+  // 4. Inline prior task summaries from this slice
+  const slicePlan = slicePlanContent ? parsePlan(slicePlanContent) : null;
+  const completedTasks = slicePlan?.tasks.filter(t => t.done) ?? [];
+  for (const ct of completedTasks) {
+    const summaryFile = resolveTaskFile(basePath, mid, sid, ct.id, "SUMMARY");
+    const summaryContent = summaryFile ? await loadFile(summaryFile) : null;
+    if (summaryContent) {
+      parts.push(`## ${ct.id} Summary (completed)`);
+      parts.push(summaryContent);
+      parts.push("");
+    }
+  }
+
+  // 5. Inline dependency summaries from other slices
+  // (if this slice depends on S01, inline S01-SUMMARY.md)
+  const roadmapFile = resolveMilestoneFile(basePath, mid, "ROADMAP");
+  const roadmapContent = roadmapFile ? await loadFile(roadmapFile) : null;
+  if (roadmapContent) {
+    const roadmap = parseRoadmap(roadmapContent);
+    const currentSlice = roadmap.slices.find(s => s.id === sid);
+    if (currentSlice && currentSlice.depends.length > 0) {
+      for (const depSid of currentSlice.depends) {
+        const depSummaryFile = resolveSliceFile(basePath, mid, depSid, "SUMMARY");
+        const depSummaryContent = depSummaryFile ? await loadFile(depSummaryFile) : null;
+        if (depSummaryContent) {
+          parts.push(`## ${depSid} Summary (dependency)`);
+          parts.push(depSummaryContent);
+          parts.push("");
+        }
+      }
+    }
+  }
+
+  // 6. Inline decisions register
+  const decisionsFile = resolveGsdRootFile(basePath, "DECISIONS");
+  const decisionsContent = decisionsFile ? await loadFile(decisionsFile) : null;
+  if (decisionsContent) {
+    parts.push("## Architectural Decisions");
+    parts.push(decisionsContent);
+    parts.push("");
+  }
+
+  // 7. Instructions
+  parts.push("## Instructions");
+  parts.push("Execute this task. When complete, write T02-SUMMARY.md and mark [x] in S01-PLAN.md.");
+
+  return parts.join("\n");
+}
+```
+
+<Warning>
+  This is **pseudocode** — the real implementation uses prompt templates loaded from `prompts/execute-task.md` with variable substitution. See `prompt-loader.ts`.
+</Warning>
+
+## Why This Matters
+
+### No Wasted Tool Calls
+
+The LLM never wastes tool calls on orientation:
+
+```bash
+# Without pre-inlining:
+1. Read T02-PLAN.md
+2. Read S01-PLAN.md
+3. Read T01-SUMMARY.md
+4. Read DECISIONS.md
+5. Finally start coding
+
+# With pre-inlining:
+1. Start coding immediately
+```
+
+### Faster Execution
+
+Average task execution time drops by **30-40%** because the LLM doesn't need to:
+
+- Navigate the file tree
+- Remember what it read 50 messages ago
+- Re-read the same files multiple times
+
+### Better Quality
+
+The LLM has **all context up front**:
+
+- Sees all must-haves before writing code
+- Knows what prior tasks built (from summaries)
+- Understands architectural constraints (from decisions)
+- Can plan the full solution before starting
+
+## Context Budget Management
+
+GSD monitors context usage in real-time:
+
+```typescript
+const cxUsage = cmdCtx?.getContextUsage?.();
+const cxPctVal = cxUsage?.percent ?? 0;
+
+if (cxPctVal > 90) {
+  ctx.ui.notify("Context window >90% full. Wrapping up...", "warning");
+}
+```
+
+If a task approaches 90% context usage, GSD warns the LLM to wrap up. If it hits 95%, the next task gets a fresh session.
+
+### Token Breakdown
+
+The progress widget shows real-time token stats:
+
+```
+↑142k  ↓8.2k  R89k  W12k  $0.287  23%/200k
+```
+
+- `↑142k` — Input tokens (prompt + inlined files)
+- `↓8.2k` — Output tokens (LLM responses)
+- `R89k` — Cache read tokens (from prompt caching)
+- `W12k` — Cache write tokens (first-time context)
+- `$0.287` — Cumulative cost this session
+- `23%/200k` — Context window usage
+
+<Info>
+  GSD uses **prompt caching** aggressively. Repeated context (decisions, prior summaries) is cached between tasks in the same slice.
+</Info>
+
+## The Prompt Templates
+
+GSD loads prompts from `src/resources/extensions/gsd/prompts/`:
+
+```
+prompts/
+  research-milestone.md
+  plan-milestone.md
+  research-slice.md
+  plan-slice.md
+  execute-task.md
+  complete-slice.md
+  complete-milestone.md
+  reassess-roadmap.md
+  replan-slice.md
+  run-uat.md
+```
+
+Each template uses variable substitution:
+
+```markdown
+# Execute {{task_id}}: {{task_title}}
+
+Slice: {{slice_id}} — {{slice_title}}
+Milestone: {{milestone_id}}
+
+## Task Plan
+
+{{task_plan_content}}
+
+## Prior Task Summaries
+
+{{prior_summaries}}
+
+## Instructions
+
+Execute this task...
+```
+
+From [`prompt-loader.ts`](https://github.com/gsd-build/GSD-2/blob/main/src/resources/extensions/gsd/prompt-loader.ts):
+
+```typescript
+export async function loadPrompt(
+  templateName: string,
+  vars: Record<string, string>,
+): Promise<string> {
+  const templatePath = join(__dirname, "prompts", `${templateName}.md`);
+  let template = await fs.readFile(templatePath, "utf-8");
+
+  // Simple variable substitution
+  for (const [key, value] of Object.entries(vars)) {
+    template = template.replaceAll(`{{${key}}}`, value);
+  }
+
+  return template;
+}
+```
+
+## State Machine Integration
+
+The state machine determines which prompt to load:
+
+```typescript
+if (state.phase === 'executing' && state.activeTask) {
+  unitType = "execute-task";
+  unitId = `${mid}/${sid}/${tid}`;
+  prompt = await buildExecuteTaskPrompt(mid, sid, sTitle, tid, tTitle, basePath);
+} else if (state.phase === 'summarizing') {
+  unitType = "complete-slice";
+  unitId = `${mid}/${sid}`;
+  prompt = await buildCompleteSlicePrompt(mid, midTitle!, sid, sTitle, basePath);
+}
+```
+
+Each phase has a dedicated prompt builder that inlines exactly what's needed for that unit.
+
+## Crash Recovery Context
+
+When auto mode resumes after a crash, it prepends a **recovery briefing**:
+
+```typescript
+const crashLock = readCrashLock(base);
+if (crashLock) {
+  const recovery = synthesizeCrashRecovery(
+    base, crashLock.unitType, crashLock.unitId,
+    crashLock.sessionFile, activityDir,
+  );
+  if (recovery && recovery.trace.toolCallCount > 0) {
+    pendingCrashRecovery = recovery.prompt;
+  }
+}
+
+// Later, when dispatching:
+if (pendingCrashRecovery) {
+  prompt = pendingCrashRecovery + "\n\n---\n\n" + prompt;
+  pendingCrashRecovery = null;
+}
+```
+
+The recovery prompt includes:
+
+- All tool calls from the crashed session (read from Pi's session file)
+- Partial file writes that survived
+- Last command output before the crash
+- Suggestions for resuming
+
+This gives the LLM full context of what happened, so it can resume mid-task.
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Write detailed summaries">
+    Task summaries are inlined into future tasks. Include:
+    - What files were created/modified
+    - Key decisions made
+    - Patterns established
+    - Gotchas for future work
+  </Accordion>
+  
+  <Accordion title="Keep DECISIONS.md updated">
+    Every task sees the decisions register. Document:
+    - Architectural choices ("Use Prisma, not raw SQL")
+    - Library selections ("Chose Zod for validation")
+    - Coding standards ("All exports are named, not default")
+  </Accordion>
+  
+  <Accordion title="Use slice dependencies">
+    If S03 needs types from S01, mark `depends:[S01]` in the roadmap. GSD auto-inlines S01-SUMMARY.md when planning S03.
+  </Accordion>
+  
+  <Accordion title="Monitor context usage">
+    If tasks consistently hit 90%+ context, split them. One task = one context window.
+  </Accordion>
+</AccordionGroup>
+
+## Artifacts That Get Inlined
+
+| File | When Inlined | Purpose |
+|------|-------------|----------|
+| `PROJECT.md` | All prompts | Living doc — what the project is right now |
+| `DECISIONS.md` | All prompts | Append-only register of architectural decisions |
+| `STATE.md` | Never (derived) | Quick-glance dashboard — always read first by humans |
+| `M001-ROADMAP.md` | Planning, executing | Milestone plan with slice checkboxes |
+| `M001-CONTEXT.md` | Planning | User decisions from the discuss phase |
+| `M001-RESEARCH.md` | Planning | Codebase and ecosystem research |
+| `S01-PLAN.md` | Executing, completing | Slice task decomposition with must-haves |
+| `T01-PLAN.md` | Executing T01 | Individual task plan with verification criteria |
+| `T01-SUMMARY.md` | Executing T02+ | What happened — YAML frontmatter + narrative |
+| `S01-UAT.md` | Completing, reassessing | Human test script derived from slice outcomes |
+
+## Related Concepts
+
+<CardGroup cols={2}>
+  <Card title="State Machine" icon="diagram-project" href="/concepts/state-machine">
+    How phase determines which prompt to load
+  </Card>
+  <Card title="Milestones, Slices, Tasks" icon="list-check" href="/concepts/milestones-slices-tasks">
+    The hierarchy that drives context inlining
+  </Card>
+</CardGroup>

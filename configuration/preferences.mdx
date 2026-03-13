@@ -1,0 +1,381 @@
+---
+title: 'Preferences'
+description: 'Configure GSD behavior with global and project-level preferences'
+icon: 'sliders'
+---
+
+GSD preferences control how the agent behaves during autonomous and step modes. Preferences are stored as markdown files with YAML frontmatter and can be set globally or per-project.
+
+## File Locations
+
+GSD supports two preference scopes with automatic merging:
+
+<CardGroup cols={2}>
+  <Card title="Global" icon="globe">
+    `~/.gsd/preferences.md`
+    
+    Applies to all projects
+  </Card>
+  <Card title="Project" icon="folder">
+    `.gsd/preferences.md`
+    
+    Overrides global settings
+  </Card>
+</CardGroup>
+
+Project preferences override global preferences on a **per-field basis**. For arrays like `always_use_skills`, the values are merged (no duplicates). For objects like `models`, individual keys are merged.
+
+<Note>
+  **Legacy path**: GSD also reads from `~/.pi/agent/gsd-preferences.md` if `~/.gsd/preferences.md` doesn't exist.
+</Note>
+
+## Managing Preferences
+
+Use the `/gsd prefs` command to open an interactive preferences editor:
+
+```bash
+gsd
+/gsd prefs
+```
+
+The editor provides:
+- Model selection for each phase (research, planning, execution, completion)
+- Timeout configuration for auto mode
+- Budget ceiling management
+- Skill discovery mode selection
+
+## File Structure
+
+Preferences use YAML frontmatter followed by optional documentation:
+
+```yaml
+---
+version: 1
+models:
+  research: claude-sonnet-4-6
+  planning: claude-opus-4-6
+  execution: claude-sonnet-4-6
+  completion: claude-sonnet-4-6
+skill_discovery: suggest
+auto_supervisor:
+  soft_timeout_minutes: 20
+  idle_timeout_minutes: 10
+  hard_timeout_minutes: 30
+budget_ceiling: 50.00
+---
+
+# GSD Preferences
+
+See documentation for field reference and examples.
+```
+
+## Core Fields
+
+<ParamField path="version" type="number" default="1" required>
+  Schema version. Always set to `1`.
+</ParamField>
+
+<ParamField path="models" type="object">
+  Per-phase model selection for auto mode. See [Models Configuration](/configuration/models).
+  
+  <Expandable title="Model Keys">
+    <ResponseField name="research" type="string">
+      Model for research phases (milestone and slice research)
+    </ResponseField>
+    <ResponseField name="planning" type="string">
+      Model for planning phases (milestone, slice, and task planning)
+    </ResponseField>
+    <ResponseField name="execution" type="string">
+      Model for task execution
+    </ResponseField>
+    <ResponseField name="completion" type="string">
+      Model for slice completion and UAT runs
+    </ResponseField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="skill_discovery" type="enum" default="suggest">
+  Controls how GSD discovers and applies skills during auto mode.
+  
+  **Options:**
+  - `auto` — Skills found and applied automatically without prompting
+  - `suggest` — Skills identified during research but not installed automatically
+  - `off` — Skill discovery disabled entirely
+  
+  See [Skill Discovery](/configuration/skill-discovery) for details.
+</ParamField>
+
+<ParamField path="auto_supervisor" type="object">
+  Timeout thresholds for auto mode supervision. See [Timeouts & Budgets](/configuration/timeouts-budgets).
+  
+  <Expandable title="Supervisor Keys">
+    <ResponseField name="model" type="string">
+      Model ID for the supervisor process (defaults to currently active model)
+    </ResponseField>
+    <ResponseField name="soft_timeout_minutes" type="number" default="20">
+      Minutes before supervisor issues soft warning to wrap up
+    </ResponseField>
+    <ResponseField name="idle_timeout_minutes" type="number" default="10">
+      Minutes of inactivity before supervisor intervenes
+    </ResponseField>
+    <ResponseField name="hard_timeout_minutes" type="number" default="30">
+      Minutes before supervisor forces termination
+    </ResponseField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="budget_ceiling" type="number">
+  USD ceiling — auto mode pauses when reached. See [Timeouts & Budgets](/configuration/timeouts-budgets).
+  
+  Example: `50.00` pauses auto mode at $50
+</ParamField>
+
+<ParamField path="uat_dispatch" type="boolean" default="false">
+  Enable automatic UAT (User Acceptance Testing) runs after slice completion.
+</ParamField>
+
+## Skill Management
+
+<ParamField path="always_use_skills" type="array">
+  Skills GSD should always load when relevant. Accepts skill names or absolute paths.
+  
+  ```yaml
+  always_use_skills:
+    - verify-uat
+    - /Users/you/.gsd/agent/skills/custom-skill
+  ```
+</ParamField>
+
+<ParamField path="prefer_skills" type="array">
+  Soft defaults — GSD prefers these skills when relevant but won't force them.
+  
+  ```yaml
+  prefer_skills:
+    - commit-ignore
+    - find-skills
+  ```
+</ParamField>
+
+<ParamField path="avoid_skills" type="array">
+  Skills GSD should avoid unless clearly needed.
+  
+  ```yaml
+  avoid_skills:
+    - experimental-skill
+  ```
+</ParamField>
+
+<ParamField path="skill_rules" type="array">
+  Situational rules for skill routing. Each rule has a `when` trigger and one or more actions.
+  
+  ```yaml
+  skill_rules:
+    - when: task involves Clerk authentication
+      use:
+        - clerk
+        - clerk-setup
+    - when: finishing implementation and human judgment matters
+      prefer:
+        - verify-uat
+  ```
+  
+  <Expandable title="Rule Structure">
+    <ResponseField name="when" type="string" required>
+      Human-readable condition describing when this rule applies
+    </ResponseField>
+    <ResponseField name="use" type="string[]">
+      Skills to always use when condition matches
+    </ResponseField>
+    <ResponseField name="prefer" type="string[]">
+      Skills to prefer when condition matches
+    </ResponseField>
+    <ResponseField name="avoid" type="string[]">
+      Skills to avoid when condition matches
+    </ResponseField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="custom_instructions" type="array">
+  Additional durable instructions related to skill use.
+  
+  ```yaml
+  custom_instructions:
+    - Always verify authentication changes manually
+    - Prefer TypeScript strict mode for new files
+  ```
+</ParamField>
+
+## Git Configuration
+
+<ParamField path="git" type="object">
+  Configure GSD's git behavior. All fields optional.
+  
+  <Expandable title="Git Keys">
+    <ResponseField name="auto_push" type="boolean" default="false">
+      Automatically push commits to remote after committing
+    </ResponseField>
+    <ResponseField name="push_branches" type="boolean" default="false">
+      Push newly created slice branches to remote
+    </ResponseField>
+    <ResponseField name="remote" type="string" default="origin">
+      Git remote name to push to
+    </ResponseField>
+    <ResponseField name="snapshots" type="boolean" default="false">
+      Create snapshot commits (WIP saves) during long-running tasks
+    </ResponseField>
+    <ResponseField name="pre_merge_check" type="boolean | string" default="false">
+      Run pre-merge checks before merging slice branch.
+      
+      - `true` — Always run checks
+      - `false` — Never run checks
+      - `"auto"` — Run when CI is detected
+    </ResponseField>
+    <ResponseField name="commit_type" type="string">
+      Override conventional commit type prefix.
+      
+      Must be one of: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `perf`, `ci`, `build`, `style`
+      
+      Default: inferred from diff content
+    </ResponseField>
+    <ResponseField name="main_branch" type="string" default="main">
+      Primary branch name for new repos (e.g., `"main"`, `"master"`, `"trunk"`)
+    </ResponseField>
+  </Expandable>
+</ParamField>
+
+## Advanced Configuration
+
+<Accordion title="Remote Questions">
+  <ParamField path="remote_questions" type="object">
+    Configure remote question routing via Slack or Discord.
+    
+    ```yaml
+    remote_questions:
+      channel: slack
+      channel_id: C1234567890
+      timeout_minutes: 15
+      poll_interval_seconds: 5
+    ```
+    
+    <Expandable title="Remote Questions Keys">
+      <ResponseField name="channel" type="enum" required>
+        Platform: `slack` or `discord`
+      </ResponseField>
+      <ResponseField name="channel_id" type="string | number" required>
+        Channel ID where questions are posted
+      </ResponseField>
+      <ResponseField name="timeout_minutes" type="number" default="15">
+        Minutes to wait for response (clamped to 1-30)
+      </ResponseField>
+      <ResponseField name="poll_interval_seconds" type="number" default="5">
+        Seconds between polls for responses (clamped to 2-30)
+      </ResponseField>
+    </Expandable>
+  </ParamField>
+</Accordion>
+
+## Examples
+
+<CodeGroup>
+
+```yaml Minimal
+---
+version: 1
+models:
+  research: claude-sonnet-4-6
+  planning: claude-opus-4-6
+  execution: claude-sonnet-4-6
+  completion: claude-sonnet-4-6
+---
+```
+
+```yaml With Timeouts
+---
+version: 1
+models:
+  planning: claude-opus-4-6
+  execution: claude-sonnet-4-6
+auto_supervisor:
+  soft_timeout_minutes: 15
+  idle_timeout_minutes: 8
+  hard_timeout_minutes: 25
+budget_ceiling: 100.00
+---
+```
+
+```yaml With Skills
+---
+version: 1
+always_use_skills:
+  - verify-uat
+skill_rules:
+  - when: task involves authentication
+    use:
+      - clerk
+      - clerk-setup
+  - when: finishing implementation
+    prefer:
+      - verify-uat
+skill_discovery: auto
+---
+```
+
+```yaml Full Configuration
+---
+version: 1
+models:
+  research: openrouter/deepseek/deepseek-r1
+  planning: claude-opus-4-6
+  execution: claude-sonnet-4-6
+  completion: claude-sonnet-4-6
+skill_discovery: suggest
+auto_supervisor:
+  soft_timeout_minutes: 20
+  idle_timeout_minutes: 10
+  hard_timeout_minutes: 30
+budget_ceiling: 75.00
+uat_dispatch: true
+always_use_skills:
+  - commit-ignore
+skill_rules:
+  - when: task involves Clerk authentication
+    use:
+      - clerk
+git:
+  auto_push: true
+  push_branches: true
+  remote: origin
+  snapshots: true
+  pre_merge_check: auto
+---
+```
+
+</CodeGroup>
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Keep it minimal" icon="minimize">
+    Only configure what you need. Defaults work well for most use cases.
+  </Card>
+  <Card title="Use Opus for planning" icon="brain">
+    Planning phases benefit most from higher-quality models. Use Sonnet for execution to save costs.
+  </Card>
+  <Card title="Skill names over paths" icon="link">
+    Use bare skill names for built-in skills. Reserve absolute paths for personal/local skills.
+  </Card>
+  <Card title="Test timeouts" icon="clock">
+    Start with default timeouts. Adjust based on your project's typical task complexity.
+  </Card>
+</CardGroup>
+
+## Validation
+
+GSD validates preferences on load and ignores invalid values:
+
+- Unknown `skill_discovery` modes → falls back to `"suggest"`
+- Invalid timeout values → uses defaults
+- Malformed skill rules → skipped with warning
+- Invalid git configuration → uses defaults
+
+Check `.gsd/STATE.md` or run `/gsd status` to see active preferences and any validation warnings.

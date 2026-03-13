@@ -1,0 +1,229 @@
+---
+title: Loader Pattern
+description: Two-file loader pattern ensures environment variables are set before SDK evaluation
+---
+
+GSD uses a **two-file loader pattern** to ensure `PI_PACKAGE_DIR` and other environment variables are set before any Pi SDK code evaluates.
+
+## The Problem
+
+The Pi SDK's `config.js` reads `PI_PACKAGE_DIR` at module evaluation time (top-level code). If you set `PI_PACKAGE_DIR` in a file that also imports Pi SDK modules, the imports evaluate before your assignment runs:
+
+```typescript
+// ❌ This doesn't work
+import { InteractiveMode } from '@mariozechner/pi-coding-agent' // Evaluates config.js NOW
+
+process.env.PI_PACKAGE_DIR = '/custom/path' // Too late!
+```
+
+## The Solution
+
+Split the entry point into two files:
+
+1. **`loader.ts`** — Sets all env vars with **zero SDK imports**, then dynamic-imports `cli.ts`
+2. **`cli.ts`** — Statically imports Pi SDK modules, wires managers, starts interactive mode
+
+### loader.ts
+
+Location: `src/loader.ts:1-99`
+
+```typescript
+#!/usr/bin/env node
+import { fileURLToPath } from 'url'
+import { dirname, resolve } from 'path'
+import { agentDir } from './app-paths.js'
+
+// pkg/ is a shim directory: contains gsd's piConfig (package.json) and pi's
+// theme assets (dist/modes/interactive/theme/) without a src/ directory.
+const pkgDir = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'pkg')
+
+// MUST be set before any dynamic import of pi SDK fires
+process.env.PI_PACKAGE_DIR = pkgDir
+process.env.PI_SKIP_VERSION_CHECK = '1'
+process.title = 'gsd'
+
+// GSD_CODING_AGENT_DIR — tells pi's getAgentDir() to return ~/.gsd/agent/
+process.env.GSD_CODING_AGENT_DIR = agentDir
+
+// NODE_PATH — make gsd's node_modules available to extensions
+const gsdRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const gsdNodeModules = join(gsdRoot, 'node_modules')
+process.env.NODE_PATH = process.env.NODE_PATH
+  ? `${gsdNodeModules}:${process.env.NODE_PATH}`
+  : gsdNodeModules
+
+// Force Node to re-evaluate module search paths
+const { Module } = await import('module');
+(Module as any)._initPaths?.()
+
+// Dynamic import defers ESM evaluation — config.js will see PI_PACKAGE_DIR above
+await import('./cli.js')
+```
+
+**Key points:**
+
+- **Zero SDK imports** — `loader.ts` only imports Node built-ins and GSD's own `app-paths.js`
+- **Dynamic import at the end** — `await import('./cli.js')` defers `cli.ts` evaluation until after env vars are set
+- **NODE_PATH fix** — Extensions loaded via jiti need access to GSD's `node_modules` (e.g. `playwright`)
+
+### cli.ts
+
+Location: `src/cli.ts:1-316`
+
+```typescript
+import {
+  AuthStorage,
+  DefaultResourceLoader,
+  ModelRegistry,
+  SettingsManager,
+  SessionManager,
+  createAgentSession,
+  InteractiveMode,
+  runPrintMode,
+  runRpcMode,
+} from '@mariozechner/pi-coding-agent'
+import { agentDir, sessionsDir, authFilePath } from './app-paths.js'
+import { initResources, buildResourceLoader } from './resource-loader.js'
+
+// CLI arg parsing...
+const cliFlags = parseCliArgs(process.argv)
+
+// Setup managers
+const authStorage = AuthStorage.create(authFilePath)
+const modelRegistry = new ModelRegistry(authStorage)
+const settingsManager = SettingsManager.create(agentDir)
+const sessionManager = SessionManager.create(process.cwd(), projectSessionsDir)
+
+// Sync bundled resources to ~/.gsd/agent/
+initResources(agentDir)
+const resourceLoader = buildResourceLoader(agentDir)
+await resourceLoader.reload()
+
+// Create agent session
+const { session, extensionsResult } = await createAgentSession({
+  authStorage,
+  modelRegistry,
+  settingsManager,
+  sessionManager,
+  resourceLoader,
+})
+
+// Start interactive mode
+const interactiveMode = new InteractiveMode(session)
+await interactiveMode.run()
+```
+
+**Key points:**
+
+- **Static SDK imports** — `cli.ts` can safely import Pi SDK modules because `PI_PACKAGE_DIR` is already set
+- **Wires SDK managers** — AuthStorage, ModelRegistry, SettingsManager, SessionManager
+- **Loads resources** — Syncs bundled extensions/agents to `~/.gsd/agent/`
+- **Starts interactive mode** — Or print/RPC mode for non-TTY usage
+
+## Environment Variables Set by loader.ts
+
+| Variable | Purpose | Example Value |
+|----------|---------|---------------|
+| `PI_PACKAGE_DIR` | Tells Pi SDK where to find `piConfig` and themes | `/usr/local/lib/node_modules/gsd-pi/pkg` |
+| `PI_SKIP_VERSION_CHECK` | Suppresses Pi's built-in update check (GSD has its own) | `1` |
+| `GSD_CODING_AGENT_DIR` | Overrides Pi's default `~/.pi/agent/` → `~/.gsd/agent/` | `/home/user/.gsd/agent` |
+| `NODE_PATH` | Makes GSD's node_modules available to jiti-loaded extensions | `/usr/local/lib/node_modules/gsd-pi/node_modules` |
+| `GSD_VERSION` | Package version (for display in headers) | `0.57.1` |
+| `GSD_BIN_PATH` | Absolute path to loader (used by subagent to spawn gsd) | `/usr/local/bin/gsd` |
+| `GSD_WORKFLOW_PATH` | Absolute path to bundled GSD-WORKFLOW.md | `/usr/local/lib/node_modules/gsd-pi/src/resources/GSD-WORKFLOW.md` |
+| `GSD_BUNDLED_EXTENSION_PATHS` | Colon-joined list of bundled extension entry points | `~/.gsd/agent/extensions/gsd/index.ts:...` |
+
+## pkg/ Shim Directory
+
+Why does `PI_PACKAGE_DIR` point to `pkg/` instead of the project root?
+
+**Problem:** Pi's theme resolution looks for `dist/modes/interactive/theme/` relative to the package directory. If `PI_PACKAGE_DIR` points to GSD's root, Pi sees GSD's `src/` directory and tries to resolve themes from there, which fails.
+
+**Solution:** Create a **shim directory** (`pkg/`) that contains:
+- `package.json` with `piConfig` only (name, configDir)
+- Theme assets (if any) in `dist/modes/interactive/theme/`
+
+No `src/` directory → Pi uses the `dist/` path for themes.
+
+Location: `pkg/package.json`
+
+```json
+{
+  "name": "@glittercowboy/gsd",
+  "version": "0.57.1",
+  "piConfig": {
+    "name": "gsd",
+    "configDir": ".gsd"
+  }
+}
+```
+
+This minimal `package.json` is the **only** file in `pkg/`. Everything else (extensions, agents, workflow prompts) lives in `src/resources/` and is synced to `~/.gsd/agent/` by `resource-loader.ts`.
+
+## Module._initPaths() Hack
+
+Extensions are loaded via jiti (a just-in-time TypeScript transpiler). When an extension imports a dependency (e.g. `playwright`), jiti resolves it from Pi's location, not GSD's.
+
+Setting `NODE_PATH` alone isn't enough — Node doesn't re-evaluate module search paths after startup. We must call `Module._initPaths()` to force Node to pick up the updated `NODE_PATH`:
+
+```typescript
+process.env.NODE_PATH = gsdNodeModules
+const { Module } = await import('module');
+(Module as any)._initPaths?.()
+```
+
+See `src/loader.ts:44-57` for the full implementation.
+
+## Execution Flow
+
+```
+┌─────────────┐
+│   gsd CLI   │ (bin/gsd → dist/loader.js)
+└──────┬──────┘
+       │
+       ▼
+┌─────────────────────────────────────────────────────────┐
+│ loader.ts                                               │
+│  - Set PI_PACKAGE_DIR = pkg/                            │
+│  - Set GSD_CODING_AGENT_DIR = ~/.gsd/agent/             │
+│  - Set NODE_PATH = gsd/node_modules                     │
+│  - Call Module._initPaths()                             │
+│  - Print branded banner on first launch                 │
+│  - await import('./cli.js')  ← dynamic import           │
+└─────────────────────────────────────────────────────────┘
+       │
+       ▼
+┌─────────────────────────────────────────────────────────┐
+│ cli.ts                                                  │
+│  - Static imports of Pi SDK modules                     │
+│  - Parse CLI args (--mode, --print, etc.)               │
+│  - Run onboarding wizard if no LLM provider configured  │
+│  - Create SDK managers (auth, model, settings, session) │
+│  - initResources() → sync extensions to ~/.gsd/agent/   │
+│  - buildResourceLoader() → load extensions              │
+│  - createAgentSession() → wire everything together      │
+│  - Start InteractiveMode / PrintMode / RpcMode          │
+└─────────────────────────────────────────────────────────┘
+```
+
+## Why This Matters
+
+Without the two-file pattern:
+- `PI_PACKAGE_DIR` would be set too late
+- Pi SDK would use the wrong package directory
+- Theme resolution would fail
+- Config values (app name, config dir) would be wrong
+
+With the two-file pattern:
+- Environment is fully configured before any SDK code runs
+- Extensions can rely on `GSD_*` env vars being set
+- Subagent can spawn `gsd` instead of `pi` for workflow tasks
+- Everything "just works" on first launch
+
+## Related Files
+
+- `src/loader.ts` — Entry point, sets env vars
+- `src/cli.ts` — SDK wiring, manager creation
+- `src/app-paths.ts` — Defines ~/.gsd/ directory structure
+- `src/resource-loader.ts` — Syncs bundled resources
+- `pkg/package.json` — Shim package with piConfig

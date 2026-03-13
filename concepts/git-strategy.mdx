@@ -1,0 +1,461 @@
+---
+title: Git Strategy
+description: Branch-per-slice with squash merge — clean history, atomic rollback, full automation
+---
+
+## Overview
+
+GSD uses a **branch-per-slice** strategy with **squash merge to main**. This gives you:
+
+- **Clean history** — One commit per slice on main
+- **Atomic rollback** — Revert entire slices with `git revert`
+- **Git bisect works** — Each commit is a working state
+- **Full automation** — No manual merge conflicts
+
+## The Flow
+
+From [`git-service.ts`](https://github.com/gsd-build/GSD-2/blob/main/src/resources/extensions/gsd/git-service.ts):
+
+```typescript
+/**
+ * Squash-merge a slice branch into main and delete it.
+ *
+ * Flow: snapshot branch HEAD → squash merge → rich commit via stdin →
+ * auto-push (if enabled) → delete branch.
+ */
+export function mergeSliceToMain(
+  milestoneId: string,
+  sliceId: string,
+  sliceTitle: string
+): MergeSliceResult {
+  const mainBranch = getMainBranch();
+  const branch = `gsd/${milestoneId}/${sliceId}`;
+
+  // Build rich commit message with task list
+  const commitType = inferCommitType(sliceTitle);
+  const message = buildRichCommitMessage(
+    commitType, milestoneId, sliceId, sliceTitle, mainBranch, branch
+  );
+
+  // Squash merge
+  git.merge("--squash", branch);
+
+  // Commit with rich message via stdin
+  git.commit("-F", "-", { input: message });
+
+  // Delete the merged branch
+  git.branch("-D", branch);
+
+  return { branch, mergedCommitMessage: message, deletedBranch: true };
+}
+```
+
+## Branch Naming
+
+Slice branches follow the pattern:
+
+```
+gsd/M001/S01
+gsd/M001/S02
+gsd/M002/S01
+```
+
+**Why this format?**
+
+- **Namespace isolation** — All GSD branches start with `gsd/`
+- **Milestone grouping** — Easy to see all slices for M001
+- **Sort order** — Branches list in execution order
+
+### Worktree Support
+
+When working in a git worktree, branches are prefixed with the worktree name:
+
+```
+gsd-wt-feature-auth/M001/S01
+```
+
+From [`worktree.ts:18`](https://github.com/gsd-build/GSD-2/blob/main/src/resources/extensions/gsd/worktree.ts#L18):
+
+```typescript
+export function getSliceBranchName(
+  milestoneId: string,
+  sliceId: string,
+  worktreeName?: string | null,
+): string {
+  if (worktreeName) {
+    return `gsd-wt-${worktreeName}/${milestoneId}/${sliceId}`;
+  }
+  return `gsd/${milestoneId}/${sliceId}`;
+}
+```
+
+## Branch Lifecycle
+
+### 1. Creation
+
+When a slice starts, GSD ensures the branch exists:
+
+```typescript
+export function ensureSliceBranch(milestoneId: string, sliceId: string): boolean {
+  const branch = getSliceBranchName(milestoneId, sliceId);
+  const current = getCurrentBranch();
+
+  if (current === branch) return false;
+
+  if (!branchExists(branch)) {
+    // Branch from current when it's a normal working branch (not a slice).
+    // If already on a slice branch, fall back to main to avoid chaining.
+    const mainBranch = getMainBranch();
+    const base = SLICE_BRANCH_RE.test(current) ? mainBranch : current;
+    git.branch(branch, base);
+    created = true;
+  }
+
+  // Auto-commit dirty state via smart staging before checkout
+  autoCommitCurrentBranch();
+
+  git.checkout(branch);
+  return created;
+}
+```
+
+<Info>
+  From [`git-service.ts:256`](https://github.com/gsd-build/GSD-2/blob/main/src/resources/extensions/gsd/git-service.ts#L256) — slice branches are created from the current working branch (preserving planning artifacts) unless you're already on a slice branch.
+</Info>
+
+### 2. Task Commits
+
+Each task commits atomically on the slice branch:
+
+```typescript
+export function autoCommit(unitType: string, unitId: string): string | null {
+  // Quick check: is there anything dirty?
+  const status = git.status("--short", { allowFailure: true });
+  if (!status) return null;
+
+  smartStage();
+
+  // After smart staging, check if anything was actually staged
+  const staged = git.diff("--cached", "--stat", { allowFailure: true });
+  if (!staged) return null;
+
+  const message = `chore(${unitId}): auto-commit after ${unitType}`;
+  git.commit("-F", "-", { input: message });
+  return message;
+}
+```
+
+**Smart staging** excludes runtime files:
+
+```typescript
+const RUNTIME_EXCLUSION_PATHS: readonly string[] = [
+  ".gsd/activity/",
+  ".gsd/runtime/",
+  ".gsd/worktrees/",
+  ".gsd/auto.lock",
+  ".gsd/metrics.json",
+  ".gsd/STATE.md",
+];
+
+function smartStage(): void {
+  const excludes = RUNTIME_EXCLUSION_PATHS.map(p => `':(exclude)${p}'`);
+  const args = ["add", "-A", "--", ".", ...excludes];
+  git(args);
+}
+```
+
+This prevents GSD runtime artifacts from polluting the commit history.
+
+### 3. Squash Merge
+
+When all tasks complete, the slice branch is squash-merged to main:
+
+```bash
+# Before merge — slice branch has 3 task commits:
+gsd/M001/S01:
+  feat(S01/T03): file writer with round-trip fidelity
+  feat(S01/T02): markdown parser for plan files
+  feat(S01/T01): core types and interfaces
+
+# After squash merge — main has 1 commit:
+main:
+  feat(M001/S01): data model and type system
+
+    Tasks:
+    - feat(S01/T01): core types and interfaces
+    - feat(S01/T02): markdown parser for plan files
+    - feat(S01/T03): file writer with round-trip fidelity
+
+    Branch: gsd/M001/S01
+```
+
+### 4. Branch Deletion
+
+The slice branch is deleted after merge:
+
+```typescript
+git.branch("-D", branch);
+```
+
+**Why delete?**
+
+- Branches are ephemeral — the commit on main is the permanent record
+- Prevents branch clutter (100+ branches after a large milestone)
+- Forces intentional use — can't accidentally continue work on a merged branch
+
+## Commit Message Format
+
+GSD uses **conventional commits** with automatic type inference:
+
+```typescript
+const COMMIT_TYPE_RULES: [string[], string][] = [
+  [["fix", "bug", "patch", "hotfix"], "fix"],
+  [["refactor", "restructure", "reorganize"], "refactor"],
+  [["doc", "docs", "documentation"], "docs"],
+  [["test", "tests", "testing"], "test"],
+  [["chore", "cleanup", "clean up", "archive"], "chore"],
+];
+
+export function inferCommitType(sliceTitle: string): string {
+  const lower = sliceTitle.toLowerCase();
+
+  for (const [keywords, commitType] of COMMIT_TYPE_RULES) {
+    for (const keyword of keywords) {
+      const re = new RegExp(`\\b${keyword}\\b`, "i");
+      if (re.test(lower)) return commitType;
+    }
+  }
+
+  return "feat"; // Default: all slices are features unless keywords match
+}
+```
+
+**Example inference:**
+
+```
+"Stripe integration" → feat(M001/S01): stripe integration
+"Fix payment webhook bug" → fix(M001/S03): fix payment webhook bug
+"Refactor error handling" → refactor(M001/S04): refactor error handling
+"Update API documentation" → docs(M001/S05): update API documentation
+```
+
+## Rich Commit Messages
+
+The squash commit includes a task list:
+
+```typescript
+function buildRichCommitMessage(
+  commitType: string,
+  milestoneId: string,
+  sliceId: string,
+  sliceTitle: string,
+  mainBranch: string,
+  branch: string,
+): string {
+  const subject = `${commitType}(${milestoneId}/${sliceId}): ${sliceTitle}`;
+
+  // Collect branch commit subjects
+  const logOutput = git.log(
+    "--oneline", "--format=%s", `${mainBranch}..${branch}`,
+    { allowFailure: true }
+  );
+
+  if (!logOutput) return subject;
+
+  const subjects = logOutput.split("\n").filter(Boolean);
+  const taskLines = subjects.slice(0, 20).map(s => `- ${s}`).join("\n");
+  const truncated = subjects.length > 20 ? `\n- ... and ${subjects.length - 20} more` : "";
+
+  return `${subject}\n\nTasks:\n${taskLines}${truncated}\n\nBranch: ${branch}`;
+}
+```
+
+**Why include task commits?**
+
+- **Traceability** — See exactly what changed at the task level
+- **Debugging** — Narrow down regressions to specific tasks
+- **Documentation** — Commit history is self-documenting
+
+## Conflict Resolution
+
+GSD aborts on merge conflicts:
+
+```typescript
+try {
+  git.merge("--squash", branch);
+} catch (mergeError) {
+  // git merge --squash exits non-zero on conflict.
+  // Reset to restore a clean state.
+  git.reset("--hard", "HEAD", { allowFailure: true });
+  throw new Error(
+    `Squash-merge of "${branch}" into "${mainBranch}" failed with conflicts. ` +
+    `Working tree has been reset to a clean state. ` +
+    `Resolve manually: git checkout ${mainBranch} && git merge --squash ${branch}`
+  );
+}
+```
+
+**Why reset instead of leaving conflict markers?**
+
+- **State machine safety** — Conflict markers in `.gsd/` files corrupt state derivation
+- **User clarity** — Don't silently leave the tree in a half-merged state
+- **Manual control** — User must explicitly resolve and restart
+
+<Info>
+  From [`git-service.ts:451`](https://github.com/gsd-build/GSD-2/blob/main/src/resources/extensions/gsd/git-service.ts#L451) — auto-mode stops on conflicts. Fix them manually, then `/gsd auto` to resume.
+</Info>
+
+## Advanced Features
+
+### Snapshots (Optional)
+
+Before merging, GSD can create a snapshot ref:
+
+```typescript
+export function createSnapshot(label: string): void {
+  if (prefs.snapshots !== true) return;
+
+  const now = new Date();
+  const ts = now.getFullYear().toString()
+    + String(now.getMonth() + 1).padStart(2, "0")
+    + String(now.getDate()).padStart(2, "0")
+    + "-"
+    + String(now.getHours()).padStart(2, "0")
+    + String(now.getMinutes()).padStart(2, "0")
+    + String(now.getSeconds()).padStart(2, "0");
+
+  const refPath = `refs/gsd/snapshots/${label}/${ts}`;
+  git.updateRef(refPath, "HEAD");
+}
+```
+
+**Usage:**
+
+```yaml
+# In preferences.md:
+git:
+  snapshots: true
+```
+
+This creates refs like `refs/gsd/snapshots/gsd-M001-S01/20260313-142300` before destructive operations.
+
+### Auto-Push (Optional)
+
+After squash merge, GSD can auto-push to remote:
+
+```typescript
+if (prefs.auto_push === true) {
+  const remote = prefs.remote ?? "origin";
+  git.push(remote, mainBranch, { allowFailure: true });
+}
+```
+
+**Usage:**
+
+```yaml
+# In preferences.md:
+git:
+  auto_push: true
+  remote: origin
+```
+
+### Pre-Merge Checks (Coming Soon)
+
+GSD will support running tests before merge:
+
+```yaml
+# In preferences.md:
+git:
+  pre_merge_check: npm test
+```
+
+If tests fail, the merge is aborted.
+
+## Two-Terminal Workflow
+
+Run auto mode in one terminal, steer from another:
+
+**Terminal 1 — let it build:**
+
+```bash
+gsd
+/gsd auto
+```
+
+**Terminal 2 — steer while it works:**
+
+```bash
+gsd
+/gsd discuss    # talk through architecture decisions
+/gsd status     # check progress
+git log --oneline  # see commits in real-time
+```
+
+Both terminals read/write the same `.gsd/` files. Your decisions in terminal 2 are picked up at the next phase boundary.
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Don't manually switch branches">
+    Let GSD manage branches. Manual switches can desync the state machine.
+  </Accordion>
+  
+  <Accordion title="Review squash commits before pushing">
+    Run `git log --oneline` after auto-mode completes. Squash commits are the permanent record.
+  </Accordion>
+  
+  <Accordion title="Use worktrees for parallel work">
+    Run `/gsd worktree create feature-auth` to work on multiple milestones simultaneously.
+  </Accordion>
+  
+  <Accordion title="Enable snapshots for safety">
+    Set `git.snapshots: true` in preferences. Refs are cheap, regrets are expensive.
+  </Accordion>
+</AccordionGroup>
+
+## Example: Full History
+
+```bash
+$ git log --oneline
+
+2f3a8c1 docs(M001/S04): workflow documentation and examples
+        Tasks:
+        - docs(S04/T02): usage examples and troubleshooting
+        - docs(S04/T01): core workflow documentation
+        Branch: gsd/M001/S04
+
+9b7e5d2 fix(M001/S03): bug fixes and doc corrections
+        Tasks:
+        - fix(S03/T03): correct edge case in parser
+        - fix(S03/T02): handle missing frontmatter gracefully
+        - fix(S03/T01): fix type exports
+        Branch: gsd/M001/S03
+
+a4c6f91 feat(M001/S02): API endpoints and middleware
+        Tasks:
+        - feat(S02/T04): error handling middleware
+        - feat(S02/T03): authentication middleware
+        - feat(S02/T02): route handlers
+        - feat(S02/T01): express app setup
+        Branch: gsd/M001/S02
+
+1e2d9b3 feat(M001/S01): data model and type system
+        Tasks:
+        - feat(S01/T03): file writer with round-trip fidelity
+        - feat(S01/T02): markdown parser for plan files
+        - feat(S01/T01): core types and interfaces
+        Branch: gsd/M001/S01
+```
+
+Clean, linear, one commit per slice. Git bisect works. Each commit is revertable.
+
+## Related Concepts
+
+<CardGroup cols={2}>
+  <Card title="State Machine" icon="diagram-project" href="/concepts/state-machine">
+    When slice branches are created and merged
+  </Card>
+  <Card title="Milestones, Slices, Tasks" icon="list-check" href="/concepts/milestones-slices-tasks">
+    The hierarchy that drives branch lifecycle
+  </Card>
+</CardGroup>

@@ -1,0 +1,330 @@
+---
+title: Extension System
+description: How GSD extensions register commands, tools, hooks, and interact with the agent session
+---
+
+GSD is built as a **Pi extension** that extends the base Pi SDK with commands, tools, hooks, and custom behavior.
+
+## Extension Entry Point
+
+Every Pi extension exports a default function that receives an `ExtensionAPI` object:
+
+```typescript
+import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+
+export default function (pi: ExtensionAPI) {
+  // Register commands, tools, hooks here
+}
+```
+
+Location: `src/resources/extensions/gsd/index.ts:63`
+
+## What Extensions Can Do
+
+### Register Commands
+
+Commands are slash commands the user can type in the interactive session:
+
+```typescript
+pi.registerCommand("gsd", {
+  description: "GSD contextual wizard",
+  handler: async (ctx) => {
+    // Command implementation
+  },
+});
+```
+
+GSD registers:
+- `/gsd` — Contextual wizard (step mode)
+- `/gsd auto` — Start auto mode
+- `/gsd stop` — Stop auto mode gracefully
+- `/gsd status` — Progress dashboard
+- `/gsd discuss` — Discuss architecture
+- `/gsd queue` — Queue future milestones
+- `/gsd prefs` — Preferences editor
+- `/gsd migrate` — Migrate v1 `.planning` to `.gsd`
+- `/gsd doctor` — Validate `.gsd/` integrity
+- `/worktree` (alias `/wt`) — Git worktree lifecycle
+- `/exit` — Kill GSD process immediately
+
+### Register Tools
+
+Tools are functions the LLM can call during execution:
+
+```typescript
+pi.registerTool({
+  name: "bash",
+  description: "Run a shell command",
+  parameters: Type.Object({
+    command: Type.String(),
+    timeout: Type.Optional(Type.Number()),
+  }),
+  execute: async (toolCallId, params, signal, onUpdate, ctx) => {
+    // Tool implementation
+    return { success: true, output: "..." };
+  },
+});
+```
+
+**GSD's dynamic-cwd tools:**
+
+The built-in bash/file tools capture `process.cwd()` at startup. When `/worktree switch` changes the working directory via `process.chdir()`, relative paths still resolve against the original directory.
+
+GSD wraps these tools to read `process.cwd()` **dynamically** on each call:
+
+```typescript
+// Dynamic-cwd bash tool
+const baseBash = createBashTool(process.cwd(), {
+  spawnHook: (ctx) => ({ ...ctx, cwd: process.cwd() }),
+});
+
+// Inject default timeout to prevent hangs
+const dynamicBash = {
+  ...baseBash,
+  execute: async (toolCallId, params, signal, onUpdate, ctx) => {
+    const paramsWithTimeout = {
+      ...params,
+      timeout: params.timeout ?? 120, // default 120s
+    };
+    return baseBash.execute(toolCallId, paramsWithTimeout, signal, onUpdate, ctx);
+  },
+};
+
+pi.registerTool(dynamicBash);
+```
+
+Location: `src/resources/extensions/gsd/index.ts:75-157`
+
+### Register Hooks
+
+Hooks allow extensions to intercept and modify agent behavior at key lifecycle points:
+
+```typescript
+pi.on("before_agent_start", async (event, ctx) => {
+  // Inject system prompt additions
+  return {
+    systemPrompt: `${event.systemPrompt}\n\nAdditional context...`,
+  };
+});
+```
+
+**Available hooks:**
+
+| Hook | When it fires | Use case |
+|------|---------------|----------|
+| `session_start` | New session begins | Render branded header |
+| `before_agent_start` | Before agent prompt is sent | Inject GSD system context |
+| `agent_end` | Agent turn completes | Advance auto mode to next unit |
+| `session_before_compact` | Before context window compaction | Save `continue.md`, or block compaction during auto |
+| `session_shutdown` | Session terminates (Ctrl+C, SIGTERM) | Save activity log |
+
+### Register Shortcuts
+
+Shortcuts are keyboard bindings that trigger actions:
+
+```typescript
+import { Key } from "@mariozechner/pi-tui";
+
+pi.registerShortcut(Key.ctrlAlt("g"), {
+  description: "Open GSD dashboard",
+  handler: async (ctx) => {
+    await ctx.ui.custom((tui, theme, kb, done) => {
+      return new GSDDashboardOverlay(tui, theme, () => done());
+    });
+  },
+});
+```
+
+GSD registers:
+- `Ctrl+Alt+G` — Toggle dashboard overlay
+- Other shortcuts inherited from Pi (Ctrl+P for model switcher, etc.)
+
+## GSD Extension Architecture
+
+The core GSD extension is split into focused modules:
+
+```
+src/resources/extensions/gsd/
+  index.ts              Main entry point — registers commands, tools, hooks
+  commands.ts           /gsd command wizard implementation
+  auto.ts               Auto mode state machine and advancement logic
+  state.ts              State derivation from .gsd/ files
+  files.ts              File I/O, parsers for roadmap/plan/summary
+  paths.ts              ID-based path resolution (M001 → .gsd/milestones/M001/...)
+  preferences.ts        Preferences loading and validation
+  git-service.ts        Git operations (branch creation, squash merge, status)
+  worktree.ts           Git worktree lifecycle (create, switch, merge, return)
+  crash-recovery.ts     Session forensics and recovery briefing generation
+  metrics.ts            Token/cost tracking and projection
+  dashboard-overlay.ts  TUI overlay for /gsd status
+  prompt-loader.ts      Loads prompts from templates/ and prompts/
+  skill-discovery.ts    Detects new skills installed during auto mode
+  activity-log.ts       Prunes and saves session logs
+  guided-flow.ts        Orchestrates auto-start after discuss phase
+```
+
+## Hook Examples
+
+### before_agent_start
+
+Injects GSD system context, preferences, skill discoveries, and worktree context into the true system prompt:
+
+```typescript
+pi.on("before_agent_start", async (event, ctx) => {
+  if (!existsSync(join(process.cwd(), ".gsd"))) return;
+
+  const systemContent = loadPrompt("system"); // GSD contract
+  const preferences = loadEffectiveGSDPreferences();
+  const newSkills = detectNewSkills(); // Skills installed during this session
+  const worktreeContext = buildWorktreeContext(); // Override cwd if in worktree
+
+  const injection = await buildGuidedExecuteContextInjection(event.prompt, process.cwd());
+
+  return {
+    systemPrompt: `${event.systemPrompt}\n\n[SYSTEM CONTEXT — GSD]\n\n${systemContent}${preferences}${newSkills}${worktreeContext}`,
+    ...(injection ? {
+      message: {
+        customType: "gsd-guided-context",
+        content: injection,
+        display: false,
+      },
+    } : {}),
+  };
+});
+```
+
+Location: `src/resources/extensions/gsd/index.ts:220-286`
+
+### agent_end
+
+Advances auto mode to the next unit, or pauses if the user pressed Escape:
+
+```typescript
+pi.on("agent_end", async (event, ctx) => {
+  // If discuss phase just finished, start auto-mode
+  if (checkAutoStartAfterDiscuss()) return;
+
+  // If auto-mode is already running, advance to next unit
+  if (!isAutoActive()) return;
+
+  // If the agent was aborted (Escape), pause instead of advancing
+  const lastMsg = event.messages[event.messages.length - 1];
+  if (lastMsg && "stopReason" in lastMsg && lastMsg.stopReason === "aborted") {
+    await pauseAuto(ctx, pi);
+    return;
+  }
+
+  await handleAgentEnd(ctx, pi);
+});
+```
+
+Location: `src/resources/extensions/gsd/index.ts:288-306`
+
+### session_before_compact
+
+Saves `continue.md` when compaction occurs mid-task, or blocks compaction during auto mode:
+
+```typescript
+pi.on("session_before_compact", async (_event, _ctx) => {
+  // Block compaction during auto-mode — each unit is a fresh session
+  if (isAutoActive() || isAutoPaused()) {
+    return { cancel: true };
+  }
+
+  const state = await deriveState(process.cwd());
+
+  // Only save continue.md if we're actively executing a task
+  if (!state.activeTask || state.phase !== "executing") return;
+
+  const continuePath = resolveSliceFile(
+    process.cwd(),
+    state.activeMilestone.id,
+    state.activeSlice.id,
+    "CONTINUE"
+  );
+
+  await saveFile(continuePath, formatContinue({
+    frontmatter: { milestone, slice, task, status: "compacted" },
+    completedWork: "...",
+    remainingWork: "...",
+  }));
+});
+```
+
+Location: `src/resources/extensions/gsd/index.ts:309-352`
+
+## Bundled Extensions
+
+GSD ships with 13 extensions, all loaded automatically:
+
+| Extension | Purpose | Entry Point |
+|-----------|---------|-------------|
+| **gsd** | Core GSD workflow engine | `extensions/gsd/index.ts` |
+| **browser-tools** | Playwright-based browser automation | `extensions/browser-tools/index.ts` |
+| **search-the-web** | Brave Search, Tavily, Jina page extraction | `extensions/search-the-web/index.ts` |
+| **google-search** | Gemini-powered web search | `extensions/google-search/index.ts` |
+| **context7** | Up-to-date library/framework docs | `extensions/context7/index.ts` |
+| **bg-shell** | Long-running process management | `extensions/bg-shell/index.ts` |
+| **subagent** | Delegated tasks with isolated context | `extensions/subagent/index.ts` |
+| **mac-tools** | macOS native app automation | `extensions/mac-tools/index.ts` |
+| **mcporter** | Lazy on-demand MCP server integration | `extensions/mcporter/index.ts` |
+| **voice** | Real-time speech-to-text (macOS) | `extensions/voice/index.ts` |
+| **slash-commands** | Custom command creation | `extensions/slash-commands/index.ts` |
+| **ask-user-questions** | Structured user input with single/multi-select | `extensions/ask-user-questions.ts` |
+| **get-secrets-from-user** | Masked secret collection | `extensions/get-secrets-from-user.ts` |
+
+All extensions are synced from `src/resources/extensions/` to `~/.gsd/agent/extensions/` on every launch. See [Resource Structure](/architecture/resource-structure).
+
+## Extension Loading
+
+Extensions are loaded by Pi's `DefaultResourceLoader`:
+
+```typescript
+import { DefaultResourceLoader } from '@mariozechner/pi-coding-agent';
+
+const resourceLoader = new DefaultResourceLoader({
+  agentDir: '~/.gsd/agent',
+  additionalExtensionPaths: ['~/.pi/agent/extensions'], // Allow pi extensions too
+});
+
+await resourceLoader.reload();
+```
+
+The resource loader:
+1. Scans `agentDir/extensions/` for TypeScript entry points
+2. Loads each extension via jiti (just-in-time TS transpiler)
+3. Calls the default export function with an `ExtensionAPI` instance
+4. Deduplicates extensions by entry point path
+
+Location: `src/cli.ts:244-246`
+
+## Context Object
+
+Command handlers and hooks receive a `ctx` object with access to the UI, session, and more:
+
+```typescript
+interface ExtensionContext {
+  ui: {
+    notify(message: string, type: "info" | "warning" | "error"): void;
+    confirm(message: string): Promise<boolean>;
+    select<T>(options: SelectOption<T>[]): Promise<T>;
+    custom<T>(builder: CustomUIBuilder<T>): Promise<T>;
+    setHeader(builder: HeaderBuilder): void;
+  };
+  session: {
+    sendMessage(message: string): Promise<void>;
+    getMessages(): Message[];
+    getModel(): Model;
+    setModel(model: Model): void;
+  };
+  // ... and more
+}
+```
+
+## Related Files
+
+- `src/resources/extensions/gsd/index.ts` — Main GSD extension
+- `src/resources/extensions/browser-tools/index.ts` — Browser automation extension
+- `src/resources/extensions/subagent/index.ts` — Subagent delegation extension
+- `src/cli.ts:244-246` — Resource loader creation
+- `src/loader.ts:84-95` — Bundled extension path list

@@ -1,0 +1,260 @@
+---
+title: GSD Directory Structure
+description: Complete reference for ~/.gsd/ directory layout and all managed files
+---
+
+GSD uses `~/.gsd/` as its application root, separate from Pi's `~/.pi/` directory.
+
+## Top-Level Structure
+
+```
+~/.gsd/
+  agent/             Bundled extensions, agents, skills, settings
+  sessions/          Session history (per-directory)
+  preferences.md     Global preferences (optional)
+```
+
+Location: `src/app-paths.ts:1-8`
+
+```typescript
+import { homedir } from 'os'
+import { join } from 'path'
+
+export const appRoot = join(homedir(), '.gsd')
+export const agentDir = join(appRoot, 'agent')
+export const sessionsDir = join(appRoot, 'sessions')
+export const authFilePath = join(agentDir, 'auth.json')
+```
+
+## agent/ — Application Resources
+
+```
+~/.gsd/agent/
+  extensions/        Bundled + user extensions (synced on every launch)
+  agents/            Subagent system prompts (scout, researcher, worker)
+  skills/            Bundled skills (frontend-design, swiftui, debug-like-expert)
+  bin/               Managed binaries (fd, rg) — provisioned by Pi SDK
+  AGENTS.md          Agent routing instructions
+  auth.json          Encrypted LLM provider credentials
+  settings.json      Pi SDK settings (default model, thinking level, etc.)
+```
+
+### extensions/
+
+Synced from `src/resources/extensions/` on every launch. See [Extension System](/architecture/extension-system).
+
+```
+~/.gsd/agent/extensions/
+  gsd/                   Core GSD workflow engine
+    index.ts             Entry point
+    commands.ts          /gsd command wizard
+    auto.ts              Auto mode state machine
+    state.ts             State derivation from .gsd/ files
+    files.ts             File I/O, parsers
+    paths.ts             ID-based path resolution
+    git-service.ts       Git operations
+    worktree.ts          Git worktree lifecycle
+    crash-recovery.ts    Session forensics
+    metrics.ts           Token/cost tracking
+    dashboard-overlay.ts TUI overlay
+    ...
+  browser-tools/
+  search-the-web/
+  google-search/
+  context7/
+  bg-shell/
+  subagent/
+  mac-tools/
+  mcporter/
+  voice/
+  slash-commands/
+  ask-user-questions.ts
+  get-secrets-from-user.ts
+  shared/                Shared utilities (not an extension)
+```
+
+### agents/
+
+Subagent system prompts. Read by the `subagent` extension.
+
+```
+~/.gsd/agent/agents/
+  scout.md       Fast codebase recon — returns compressed context
+  researcher.md  Web research — finds and synthesizes current information
+  worker.md      General-purpose execution in an isolated context window
+```
+
+### skills/
+
+Bundled skills — collections of workflows and references.
+
+```
+~/.gsd/agent/skills/
+  frontend-design/
+    SKILL.md             Entry point
+    workflows/
+    references/
+  swiftui/
+    SKILL.md
+    workflows/
+    references/
+  debug-like-expert/
+    SKILL.md
+    references/
+```
+
+### bin/
+
+Managed binaries provisioned by Pi SDK:
+
+```
+~/.gsd/agent/bin/
+  fd         Fast file finder (alternative to find)
+  rg         Ripgrep (fast grep)
+```
+
+GSD provisions these on first launch to avoid relying on PATH. See `src/cli.ts:90-93`.
+
+### auth.json
+
+Encrypted LLM provider credentials. Created by the onboarding wizard.
+
+Structure:
+```json
+{
+  "anthropic": {
+    "type": "apiKey",
+    "key": "sk-ant-..."
+  },
+  "openai": {
+    "type": "apiKey",
+    "key": "sk-..."
+  },
+  "tools": {
+    "brave": "...",
+    "context7": "...",
+    "jina": "..."
+  }
+}
+```
+
+Accessed via `AuthStorage.create(authFilePath)`.
+
+### settings.json
+
+Pi SDK settings. Created and managed by Pi's `SettingsManager`.
+
+Includes:
+- Default model and provider
+- Thinking level
+- Quiet startup
+- Collapse changelog
+- Enabled models (scoped model selection)
+
+Accessed via `SettingsManager.create(agentDir)`.
+
+## sessions/ — Session History
+
+```
+~/.gsd/sessions/
+  --path-to-project-1--/
+    2024-03-13T12-00-00.jsonl
+    2024-03-13T14-30-00.jsonl
+  --path-to-project-2--/
+    2024-03-14T09-15-00.jsonl
+```
+
+Sessions are scoped **per-directory**. The `/resume` command only shows sessions from the current working directory.
+
+Path encoding: `--` prefix/suffix, `/` and `:` replaced with `-`
+
+Example:
+- `/Users/name/projects/my-app` → `--Users-name-projects-my-app--`
+- `/home/daytona/workspace` → `--home-daytona-workspace--`
+
+Location: `src/cli.ts:213-217`
+
+```typescript
+const cwd = process.cwd();
+const safePath = `--${cwd.replace(/^[\/\\]/, '').replace(/[\/\\:]/g, '-')}--`;
+const projectSessionsDir = join(sessionsDir, safePath);
+```
+
+### Session File Format
+
+Session files are JSONL (one JSON object per line):
+
+```jsonl
+{"type":"message","role":"user","content":"...","timestamp":"..."}
+{"type":"message","role":"assistant","content":"...","timestamp":"..."}
+{"type":"toolCall","name":"bash","params":{...},"result":{...}}
+```
+
+## preferences.md — Global Preferences
+
+Optional global preferences file. Project-specific preferences live in `.gsd/preferences.md`.
+
+See [State Files](/architecture/state-files#preferences) for the full format.
+
+## Environment Variables
+
+GSD sets these env vars to customize Pi SDK behavior:
+
+| Variable | Value | Purpose |
+|----------|-------|--------|
+| `PI_PACKAGE_DIR` | `<install>/pkg` | Tells Pi SDK where to find piConfig and themes |
+| `PI_SKIP_VERSION_CHECK` | `1` | Suppresses Pi's update check (GSD has its own) |
+| `GSD_CODING_AGENT_DIR` | `~/.gsd/agent` | Overrides Pi's default `~/.pi/agent/` |
+
+Set by `src/loader.ts:17-42`.
+
+## Legacy Migration
+
+GSD 2 migrates sessions from flat `~/.gsd/sessions/*.jsonl` to per-directory subdirectories on first launch:
+
+```typescript
+if (existsSync(sessionsDir)) {
+  const entries = readdirSync(sessionsDir);
+  const flatJsonl = entries.filter(f => f.endsWith('.jsonl'));
+  if (flatJsonl.length > 0) {
+    mkdirSync(projectSessionsDir, { recursive: true });
+    for (const file of flatJsonl) {
+      const src = join(sessionsDir, file);
+      const dst = join(projectSessionsDir, file);
+      if (!existsSync(dst)) {
+        renameSync(src, dst);
+      }
+    }
+  }
+}
+```
+
+Location: `src/cli.ts:222-240`
+
+## Inspecting ~/.gsd/
+
+All managed files are human-readable:
+
+```bash
+# View extensions
+ls ~/.gsd/agent/extensions/
+
+# View agents
+cat ~/.gsd/agent/agents/scout.md
+
+# View auth (encrypted)
+cat ~/.gsd/agent/auth.json
+
+# View settings
+cat ~/.gsd/agent/settings.json
+
+# View sessions for current project
+ls ~/.gsd/sessions/--$(pwd | sed 's|^/||' | tr '/:' '-')--/
+```
+
+## Related Files
+
+- `src/app-paths.ts` — Defines ~/.gsd/ directory structure
+- `src/loader.ts:17-42` — Sets environment variables
+- `src/cli.ts:213-240` — Per-directory session scoping, legacy migration
+- `src/resource-loader.ts:26-53` — Syncs bundled resources

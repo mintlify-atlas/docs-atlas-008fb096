@@ -1,0 +1,230 @@
+---
+title: Resource Structure
+description: How bundled extensions, agents, and workflow prompts are synced to ~/.gsd/agent/
+---
+
+GSD bundles extensions, agents, skills, and workflow prompts in the npm package and syncs them to `~/.gsd/agent/` on every launch.
+
+## Always-Overwrite Sync
+
+`resource-loader.ts` syncs bundled resources on **every launch**, not just first run. This ensures `npm update -g gsd-pi` takes effect immediately.
+
+Location: `src/resource-loader.ts:26-53`
+
+```typescript
+export function initResources(agentDir: string): void {
+  mkdirSync(agentDir, { recursive: true });
+
+  // Sync extensions — always overwrite so updates land on next launch
+  const destExtensions = join(agentDir, 'extensions');
+  cpSync(bundledExtensionsDir, destExtensions, { recursive: true, force: true });
+
+  // Sync agents
+  const destAgents = join(agentDir, 'agents');
+  const srcAgents = join(resourcesDir, 'agents');
+  if (existsSync(srcAgents)) {
+    cpSync(srcAgents, destAgents, { recursive: true, force: true });
+  }
+
+  // Sync skills
+  const destSkills = join(agentDir, 'skills');
+  const srcSkills = join(resourcesDir, 'skills');
+  if (existsSync(srcSkills)) {
+    cpSync(srcSkills, destSkills, { recursive: true, force: true });
+  }
+
+  // Sync AGENTS.md
+  const srcAgentsMd = join(resourcesDir, 'AGENTS.md');
+  const destAgentsMd = join(agentDir, 'AGENTS.md');
+  if (existsSync(srcAgentsMd)) {
+    writeFileSync(destAgentsMd, readFileSync(srcAgentsMd));
+  }
+}
+```
+
+**Why always overwrite?**
+
+- Ensures latest code is active immediately after `npm update -g gsd-pi`
+- No stale code from prior versions
+- User customizations go in separate directories with unique names (e.g. `~/.gsd/agent/extensions/my-custom-extension/`)
+
+## Bundled Resources
+
+### Extensions
+
+Location in package: `src/resources/extensions/`
+
+Synced to: `~/.gsd/agent/extensions/`
+
+```
+src/resources/extensions/
+  gsd/                   Core GSD extension (auto mode, commands, state machine)
+  browser-tools/         Playwright-based browser automation
+  search-the-web/        Brave Search, Tavily, Jina page extraction
+  google-search/         Gemini-powered web search
+  context7/              Up-to-date library/framework docs
+  bg-shell/              Long-running process management
+  subagent/              Delegated tasks with isolated context
+  mac-tools/             macOS native app automation
+  mcporter/              Lazy on-demand MCP server integration
+  voice/                 Real-time speech-to-text (macOS)
+  slash-commands/        Custom command creation
+  ask-user-questions.ts  Structured user input with single/multi-select
+  get-secrets-from-user.ts  Masked secret collection
+  shared/                Shared utilities (not an extension)
+```
+
+Each extension has an `index.ts` entry point that exports a default function:
+
+```typescript
+import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+
+export default function (pi: ExtensionAPI) {
+  // Register commands, tools, hooks
+}
+```
+
+### Agents
+
+Location in package: `src/resources/agents/`
+
+Synced to: `~/.gsd/agent/agents/`
+
+```
+src/resources/agents/
+  scout.md       Fast codebase recon — returns compressed context
+  researcher.md  Web research — finds and synthesizes current information
+  worker.md      General-purpose execution in an isolated context window
+```
+
+Agents are markdown files containing system prompts. The `subagent` extension reads these files and passes them to spawned processes via `--append-system-prompt`.
+
+### Skills
+
+Location in package: `src/resources/skills/`
+
+Synced to: `~/.gsd/agent/skills/`
+
+```
+src/resources/skills/
+  frontend-design/       Frontend UI — web components, React/HTML/CSS, styling
+  swiftui/               macOS/iOS apps — SwiftUI, Xcode, App Store
+  debug-like-expert/     Debugging — complex bugs, root-cause investigation
+```
+
+Skills are collections of workflows and references. Each skill has a `SKILL.md` entry point that defines triggers and routing logic.
+
+### Workflow Prompts
+
+Location in package: `src/resources/GSD-WORKFLOW.md`
+
+NOT synced to `~/.gsd/agent/` — read directly via `GSD_WORKFLOW_PATH` env var.
+
+`GSD-WORKFLOW.md` is the manual bootstrap protocol that teaches the agent how to operate GSD manually using files on disk. It's loaded by the GSD extension when dispatching workflow prompts.
+
+Location: `src/loader.ts:72-74`
+
+```typescript
+process.env.GSD_WORKFLOW_PATH = join(resourcesDir, 'GSD-WORKFLOW.md');
+```
+
+### AGENTS.md
+
+Location in package: `src/resources/AGENTS.md`
+
+Synced to: `~/.gsd/agent/AGENTS.md`
+
+Agent routing instructions that tell the LLM which agent to use for which task. Read by the `subagent` extension when presenting agent options.
+
+## Resource Loader
+
+The resource loader scans `~/.gsd/agent/extensions/` and `~/.pi/agent/extensions/` for entry points:
+
+```typescript
+export function buildResourceLoader(agentDir: string): DefaultResourceLoader {
+  const piAgentDir = join(homedir(), '.pi', 'agent');
+  const piExtensionsDir = join(piAgentDir, 'extensions');
+  
+  return new DefaultResourceLoader({
+    agentDir,
+    additionalExtensionPaths: [piExtensionsDir],
+  });
+}
+```
+
+Location: `src/resource-loader.ts:60-68`
+
+**Key points:**
+
+- GSD extensions are loaded from `~/.gsd/agent/extensions/`
+- Pi extensions are loaded from `~/.pi/agent/extensions/` (optional)
+- Deduplication by entry point path — same extension not loaded twice
+- Extensions are loaded via jiti (just-in-time TypeScript transpiler)
+
+## Bundled Extension Paths
+
+`GSD_BUNDLED_EXTENSION_PATHS` is set by `loader.ts` to a colon-joined list of bundled extension entry points:
+
+```typescript
+process.env.GSD_BUNDLED_EXTENSION_PATHS = [
+  join(agentDir, 'extensions', 'gsd', 'index.ts'),
+  join(agentDir, 'extensions', 'bg-shell', 'index.ts'),
+  join(agentDir, 'extensions', 'browser-tools', 'index.ts'),
+  join(agentDir, 'extensions', 'context7', 'index.ts'),
+  join(agentDir, 'extensions', 'search-the-web', 'index.ts'),
+  join(agentDir, 'extensions', 'slash-commands', 'index.ts'),
+  join(agentDir, 'extensions', 'subagent', 'index.ts'),
+  join(agentDir, 'extensions', 'mac-tools', 'index.ts'),
+  join(agentDir, 'extensions', 'ask-user-questions.ts'),
+  join(agentDir, 'extensions', 'get-secrets-from-user.ts'),
+].join(':');
+```
+
+Location: `src/loader.ts:84-95`
+
+This env var is used by the `subagent` extension to pass `--extension <path>` to spawned `gsd` processes, ensuring subagents have access to the same bundled extensions.
+
+## Directory Structure After Sync
+
+```
+~/.gsd/
+  agent/
+    extensions/          Synced from src/resources/extensions/
+      gsd/
+      browser-tools/
+      search-the-web/
+      ...
+    agents/              Synced from src/resources/agents/
+      scout.md
+      researcher.md
+      worker.md
+    skills/              Synced from src/resources/skills/
+      frontend-design/
+      swiftui/
+      debug-like-expert/
+    AGENTS.md            Synced from src/resources/AGENTS.md
+    auth.json            Created by onboarding wizard
+    settings.json        Created by Pi SDK
+  sessions/              Session history per-directory
+    --path-to-project--/
+      2024-03-13T12-00-00.jsonl
+```
+
+## User Customizations
+
+Users can add custom extensions, agents, and skills by creating new directories in `~/.gsd/agent/`:
+
+```
+~/.gsd/agent/extensions/my-custom-extension/index.ts
+~/.gsd/agent/agents/my-custom-agent.md
+~/.gsd/agent/skills/my-custom-skill/SKILL.md
+```
+
+These files are **not** overwritten by `initResources()` because they don't match the bundled names.
+
+## Related Files
+
+- `src/resource-loader.ts` — Syncs bundled resources to ~/.gsd/agent/
+- `src/loader.ts:84-95` — Sets GSD_BUNDLED_EXTENSION_PATHS
+- `src/cli.ts:244-246` — Creates resource loader, loads extensions
+- `src/app-paths.ts` — Defines ~/.gsd/ directory structure

@@ -1,0 +1,318 @@
+---
+title: "voice"
+description: "Toggle voice input mode for hands-free interaction"
+---
+
+## Overview
+
+The `/voice` command enables speech recognition for hands-free interaction with GSD. It uses the macOS Speech framework to transcribe spoken input directly into the chat editor.
+
+<Warning>
+Voice mode is **macOS only**. It requires Xcode Command Line Tools and system microphone permissions.
+</Warning>
+
+## Syntax
+
+```bash
+/voice
+```
+
+Toggles voice mode on/off.
+
+## Keyboard Shortcut
+
+<ParamField path="Ctrl+Alt+V" type="keyboard">
+  Toggles voice mode on/off
+</ParamField>
+
+## How It Works
+
+### Activation
+
+1. **Start**: Press `Ctrl+Alt+V` or type `/voice`
+2. **Compilation**: First use compiles the Swift recognizer (one-time, ~5 seconds)
+3. **Permission**: macOS prompts for microphone access (if not already granted)
+4. **Recording**: Footer shows a flashing indicator: `● transcribing`
+
+### Transcription
+
+- Speech is transcribed in real-time
+- Text appears in the chat editor as you speak
+- Partial results update continuously
+- Final results replace partials when you pause
+
+### Stopping
+
+- Press `Enter` to send the transcribed message
+- Press `Escape` to cancel and exit voice mode
+
+The footer indicator stops flashing when voice mode exits.
+
+## Visual Indicators
+
+### Footer Display
+
+When voice mode is active, the footer shows:
+
+```
+~/project (main)                                      ● transcribing
+↑1.2k ↓450 $0.234 15.3%/200k                          claude-sonnet-4-6
+```
+
+- **Flashing dot**: Alternates between red and dim gray every 500ms
+- **"transcribing" label**: Shown in red
+
+### Editor Updates
+
+The chat editor updates in real-time as you speak:
+
+```
+Create a new React component
+```
+
+Becomes:
+
+```
+Create a new React component called UserProfile with props for name and email
+```
+
+## Examples
+
+### Basic Usage
+
+1. Press `Ctrl+Alt+V`
+2. Speak: "Create a new migration for user profiles"
+3. Press `Enter` to send
+
+The agent receives the transcribed text and responds.
+
+### Voice-First Workflow
+
+```bash
+Ctrl+Alt+V: "Run GSD auto mode"
+Enter
+[Agent starts auto-mode]
+
+Ctrl+Alt+V: "Stop and show me the current status"
+Enter
+[Agent stops and shows dashboard]
+
+Ctrl+Alt+V: "Fix the test failures in the authentication slice"
+Enter
+[Agent works on tests]
+```
+
+### Multi-Turn Conversation
+
+```bash
+# Turn 1
+Ctrl+Alt+V: "What's the status of milestone two?"
+Enter
+
+# Turn 2
+Ctrl+Alt+V: "Start working on the next slice"
+Enter
+
+# Turn 3
+Ctrl+Alt+V: "Actually, let's fix the doctor issues first"
+Enter
+```
+
+## System Requirements
+
+### macOS
+
+- **Version**: macOS 10.15 (Catalina) or later
+- **Framework**: Speech.framework (built-in)
+- **Tools**: Xcode Command Line Tools
+
+**Install Xcode CLI:**
+```bash
+xcode-select --install
+```
+
+### Permissions
+
+First use triggers a macOS permission dialog:
+
+```
+"pi" would like to access the microphone.
+
+[Don't Allow] [OK]
+```
+
+Click **OK** to grant access.
+
+**Manual permission check:**
+1. Open **System Preferences** → **Security & Privacy** → **Privacy**
+2. Select **Microphone** from the list
+3. Ensure **pi** (or your terminal app) is checked
+
+## Technical Details
+
+### Speech Recognizer
+
+Voice mode uses a Swift binary (`speech-recognizer`) that:
+
+1. Initializes the Speech framework
+2. Configures for real-time recognition
+3. Streams audio from the default microphone
+4. Emits line-based output:
+   - `READY` - Recognizer initialized
+   - `PARTIAL:<text>` - Intermediate results
+   - `FINAL:<text>` - Final transcription
+   - `ERROR:<message>` - Error occurred
+
+### Compilation
+
+On first use:
+
+```bash
+swiftc speech-recognizer.swift -o speech-recognizer \
+  -framework Speech \
+  -framework AVFoundation
+```
+
+The binary is cached at:
+```
+~/.pi/extensions/voice/speech-recognizer
+```
+
+Subsequent uses are instant (no recompilation).
+
+### Pause Handling
+
+The recognizer handles speech pauses automatically:
+
+- Short pauses: Continue accumulating in current transcription
+- Long pauses: Finalize current text and start fresh
+
+This prevents the "empty transcription reset" bug common in basic recognizers.
+
+## Limitations
+
+### Platform Support
+
+- **macOS**: Full support
+- **Linux**: Not supported (no Speech framework)
+- **Windows**: Not supported (no Speech framework)
+
+<Note>
+Future versions may add cross-platform support using alternative speech engines.
+</Note>
+
+### Language
+
+Recognition language follows system preferences:
+
+**Check current language:**
+1. **System Preferences** → **Keyboard** → **Dictation**
+2. Look at **Language** dropdown
+
+Common languages:
+- English (US, UK, Australia, etc.)
+- Spanish
+- French
+- German
+- Japanese
+- Mandarin
+- And 50+ others
+
+### Accuracy
+
+Speech recognition accuracy depends on:
+
+- **Microphone quality**: Better mic = better results
+- **Background noise**: Quiet environment helps
+- **Speech clarity**: Clear enunciation improves accuracy
+- **Technical terms**: May misrecognize domain-specific jargon
+
+<Tip>
+For technical terms (function names, file paths), consider typing instead of speaking.
+</Tip>
+
+## Troubleshooting
+
+### "Failed to compile speech recognizer"
+
+**Cause:** Xcode Command Line Tools not installed
+
+**Fix:**
+```bash
+xcode-select --install
+```
+
+Follow the installation prompts, then retry `/voice`.
+
+### No transcription appears
+
+**Possible causes:**
+
+1. **Microphone permission denied**
+   - Go to **System Preferences** → **Security & Privacy** → **Privacy** → **Microphone**
+   - Enable access for your terminal app
+
+2. **Wrong input device**
+   - Go to **System Preferences** → **Sound** → **Input**
+   - Select the correct microphone
+   - Check input level bars move when you speak
+
+3. **Microphone muted**
+   - Check hardware mute switch/button
+   - Check system volume settings
+
+### Transcription lags or cuts off
+
+**Cause:** High CPU usage or system load
+
+**Fix:**
+- Close unnecessary apps
+- Wait for heavy tasks to complete
+- Try again
+
+### Incorrect transcriptions
+
+**Workaround:**
+- Use keyboard to edit after transcription
+- Cancel with `Escape` and type instead
+- Train macOS dictation (say "Computer, learn new words" in any dictation field)
+
+## Best Practices
+
+### When to Use Voice
+
+**Good for:**
+- Quick commands: "Run the tests"
+- Natural language queries: "What's the status of milestone three?"
+- Long descriptions: Describing feature requirements
+
+**Not ideal for:**
+- Code snippets (better to type)
+- File paths (too error-prone)
+- Precise technical terms (may misrecognize)
+
+### Effective Speaking
+
+1. **Wait for READY**: Don't speak until the footer shows "transcribing"
+2. **Speak clearly**: Normal pace, clear enunciation
+3. **Use pauses**: Pause between sentences for better segmentation
+4. **Review before sending**: Check transcription accuracy
+5. **Edit as needed**: Use keyboard to fix errors
+
+### Combining Voice + Keyboard
+
+```bash
+# Voice for bulk content
+Ctrl+Alt+V: "Create a new user authentication system with JWT tokens and refresh token rotation"
+Escape  # Exit voice mode
+
+# Keyboard for precision edits
+[Edit to add: "using bcrypt for password hashing"]
+
+Enter  # Send
+```
+
+## Related Commands
+
+- [/gsd](/commands/gsd) - Main GSD command (works with voice input)
+- [Keyboard Shortcuts](/commands/keyboard-shortcuts) - All available shortcuts

@@ -1,0 +1,416 @@
+---
+title: "/gsd queue"
+description: "Queue future milestones via conversational intake — safe to run during auto-mode"
+---
+
+## Overview
+
+`/gsd queue` lets you **queue future milestones** without interrupting current work. It launches a conversational intake where the LLM asks about scope, dependencies, and priority — then writes `CONTEXT.md` files for new milestones that auto-mode will pick up when ready.
+
+<Tip>
+  Queue is **safe to run during auto-mode** — it only writes to future milestone directories that won't be touched until current work finishes.
+</Tip>
+
+## Basic Usage
+
+```bash
+# Queue new milestones
+/gsd queue
+
+# LLM shows context:
+#   Currently executing: M002 — Webhook System (phase: executing)
+#   1 milestone complete, 2 pending
+#   Next available milestone ID: M004
+
+# LLM asks:
+#   What do you want to build next?
+
+# You describe scope:
+#   "Analytics dashboard — show webhook delivery stats,
+#   success/failure rates, and event timeline."
+
+# LLM asks follow-ups:
+#   - Should this depend on M002 being complete?
+#   - Real-time updates or static snapshots?
+#   - Auth requirements?
+
+# LLM writes:
+#   .gsd/milestones/M004/M004-CONTEXT.md
+#   .gsd/QUEUE.md (appends queue log entry)
+```
+
+## How It Works
+
+### 1. Context Gathering
+
+Before asking questions, the LLM loads **existing project context**:
+
+- **PROJECT.md** — milestone sequence and project overview
+- **DECISIONS.md** — architectural decisions
+- **All milestone contexts** — what's already planned
+- **Completed summaries** — what's already built
+- **Active roadmaps** — what's in progress
+- **QUEUE.md** — previous queue entries
+
+This ensures the LLM asks **informed questions** and avoids duplicates.
+
+### 2. Conversational Intake
+
+The LLM conducts a brief interview:
+
+```
+LLM: What do you want to build next?
+
+You: User dashboard to view all their webhooks and delivery status.
+
+LLM: I see M002 is building the webhook system itself.
+     Should M004 depend on M002 being complete?
+
+You: Yes, the dashboard needs the webhook data model from M002.
+
+LLM: What's the priority? Should this run before M003 (Email notifications)?
+
+You: No, M003 is higher priority. M004 can wait.
+
+LLM: Any architectural constraints I should know about?
+
+You: Use React + TailwindCSS to match the existing app.
+     Pull data from the same Postgres DB.
+```
+
+### 3. Multi-Milestone Queueing
+
+The LLM can queue **multiple milestones in one session**:
+
+```
+LLM: I've captured M004: User Dashboard.
+     Want to queue another milestone? (y/n)
+
+You: Yes, also need API rate limiting.
+
+LLM: Tell me about the rate limiting scope...
+```
+
+This continues until you say "no" or the discussion is complete.
+
+### 4. Artifacts Written
+
+After the interview, the LLM writes:
+
+#### Milestone Context File
+
+```markdown .gsd/milestones/M004/M004-CONTEXT.md
+---
+milestone: M004
+title: User Dashboard
+queued_at: 2026-03-13T14:32:18Z
+depends_on:
+  - M002
+---
+
+# M004: User Dashboard
+
+## Vision
+
+Provide users with a real-time view of all their webhook endpoints,
+delivery status, success/failure rates, and event timeline.
+
+## Scope
+
+- List all webhook endpoints for authenticated user
+- Show delivery stats: total events, success %, avg latency
+- Event timeline with filters (date range, endpoint, status)
+- Retry failed deliveries from UI
+
+## Architectural Context
+
+- Built with React + TailwindCSS (matches existing app)
+- Pulls data from Postgres (webhook_events table)
+- Depends on M002 for data model and API endpoints
+
+## Dependencies
+
+- M002: Webhook System — provides data model and API
+
+## Out of Scope
+
+- Admin dashboard (separate milestone)
+- Webhook creation UI (covered in M002)
+- Billing/usage tracking (future)
+```
+
+#### Queue Log
+
+```markdown .gsd/QUEUE.md
+## 2026-03-13 14:32
+
+Queued M004: User Dashboard
+
+- Conversational intake captured scope and dependencies
+- Depends on M002 (webhook system)
+- Priority: after M003 (email notifications)
+- Stack: React + TailwindCSS + Postgres
+```
+
+<Note>
+  The queue log is **append-only** — it shows the history of what was queued and when.
+</Note>
+
+## State Files Modified
+
+<AccordionGroup>
+  <Accordion title="Milestone context files">
+    - `.gsd/milestones/M004/M004-CONTEXT.md` — one per queued milestone
+    - No roadmap yet — that's created during JIT planning
+  </Accordion>
+  
+  <Accordion title="Queue log">
+    - `.gsd/QUEUE.md` — append-only log of queued milestones
+  </Accordion>
+  
+  <Accordion title="Project metadata (optional)">
+    - `.gsd/PROJECT.md` — may be updated if milestone sequence changes
+  </Accordion>
+</AccordionGroup>
+
+## Just-In-Time Planning
+
+Queued milestones **do not get roadmaps immediately**. The roadmap is created **just before execution**:
+
+1. **Queue phase** — write `M004-CONTEXT.md` (scope, dependencies, vision)
+2. **Later** — when auto-mode reaches M004, it reads context and creates roadmap
+3. **Execution** — auto-mode plans slices, executes tasks, completes milestone
+
+This avoids:
+
+- **Stale plans** — roadmaps written months in advance may be wrong
+- **Wasted effort** — queued milestone might get deprioritized
+- **Churn** — requirements change between queueing and execution
+
+<Tip>
+  Think of queue as **capturing intent**, not **detailed planning**. The details come later when context is fresh.
+</Tip>
+
+## Dependency Management
+
+Queued milestones can declare **dependencies** in their context file:
+
+```yaml
+---
+milestone: M004
+depends_on:
+  - M002
+  - M003
+---
+```
+
+When auto-mode advances:
+
+- Skips M004 if M002 or M003 are incomplete
+- Advances to the first milestone with satisfied dependencies
+- Shows blocker: "M004 is waiting on unmet deps: M002, M003"
+
+<Warning>
+  Circular dependencies (M004 → M005 → M004) will block both milestones. Review dependency chains carefully.
+</Warning>
+
+## When to Use
+
+### Use `/gsd queue` when:
+
+- **Planning ahead** — you know what's coming but don't want to plan details yet
+- **Auto-mode is running** — don't interrupt, just queue the next milestone
+- **Batching ideas** — capture 3-4 future milestones in one session
+- **Dependency planning** — "M005 depends on M003 and M004"
+- **Team coordination** — queue milestones for different team members
+
+### Skip queue when:
+
+- **Ready to start immediately** — just use `/gsd` to create the milestone
+- **Only one milestone planned** — no need to queue, it's the next one anyway
+- **Unclear scope** — queue works best when you know what you want
+
+## Safe to Run During Auto-Mode
+
+Queue is **non-blocking** — it only writes to future milestone directories:
+
+```bash
+# Auto-mode executing M002
+/gsd auto
+
+# In another session or after pausing:
+/gsd queue
+# Queue M004, M005, M006
+
+# Auto-mode continues on M002
+# When M002 completes, advances to M003
+# When M003 completes, advances to M004 (queued earlier)
+```
+
+<Note>
+  The queue command appends to `PROJECT.md` and `QUEUE.md`, but these are **safe** — auto-mode only reads them, never writes.
+</Note>
+
+## Deduplication
+
+The LLM checks for **duplicate milestones** during intake:
+
+```
+LLM: I see M003 is already planned: "Email notifications".
+     You just described "Send email alerts for failed webhooks".
+     Is this a duplicate, or something different?
+
+You: Different. M003 is user-facing emails (welcome, etc.).
+     M005 is ops alerts for webhook failures.
+
+LLM: Got it. I'll queue M005: Webhook Failure Alerts.
+```
+
+This prevents:
+
+- Redundant milestones that overlap in scope
+- Confusion about which milestone owns a feature
+- Wasted effort implementing the same thing twice
+
+## Examples
+
+<CodeGroup>
+
+```bash Queue single milestone
+/gsd queue
+
+LLM: Currently executing M002. Next available ID: M004.
+     What do you want to build next?
+
+You: Admin dashboard to view all users and webhook activity.
+
+LLM: Should this depend on M002 being complete?
+
+You: Yes, needs the webhook data model.
+
+# Result:
+#   .gsd/milestones/M004/M004-CONTEXT.md
+#   .gsd/QUEUE.md (appended)
+```
+
+```bash Queue multiple milestones
+/gsd queue
+
+You: I want to queue three milestones:
+     1. Admin dashboard
+     2. Billing integration
+     3. Usage analytics
+
+LLM: Let's take them one at a time.
+     Tell me about the admin dashboard scope...
+
+# ...interview for M004...
+
+LLM: Got M004. Now, billing integration...
+
+# ...interview for M005...
+
+LLM: Got M005. Finally, usage analytics...
+
+# ...interview for M006...
+
+# Result:
+#   M004-CONTEXT.md (admin dashboard)
+#   M005-CONTEXT.md (billing)
+#   M006-CONTEXT.md (analytics)
+#   QUEUE.md (3 entries appended)
+```
+
+```bash Dependency chain
+/gsd queue
+
+You: Queue M005: Email alerts for webhook failures.
+     This depends on M002 (webhook system) and M003 (email infra).
+
+LLM: Got it. I'll mark M005 as depending on M002 and M003.
+     Auto-mode will skip M005 until both are complete.
+
+# Result:
+#   M005-CONTEXT.md with depends_on: [M002, M003]
+```
+
+</CodeGroup>
+
+## Review Queued Milestones
+
+View queued milestones with `/gsd status`:
+
+```bash
+/gsd status
+
+# Dashboard shows:
+#   ✓ M001: Payment Integration         complete
+#   ● M002: Webhook System              active
+#   ○ M003: Email Notifications         pending
+#   ○ M004: User Dashboard              pending (depends on M002)
+#   ○ M005: Billing Integration         pending
+```
+
+Or inspect files directly:
+
+```bash
+# List all milestone context files
+ls .gsd/milestones/*/M*-CONTEXT.md
+
+# View queue log
+cat .gsd/QUEUE.md
+```
+
+## Reprioritizing Queued Work
+
+Queued milestones are **not locked** — you can reorder or delete them:
+
+### Reorder
+
+Rename directories to change execution order:
+
+```bash
+# Swap M004 and M005
+mv .gsd/milestones/M004 .gsd/milestones/M004-temp
+mv .gsd/milestones/M005 .gsd/milestones/M004
+mv .gsd/milestones/M004-temp .gsd/milestones/M005
+
+# Update context file headers and IDs
+```
+
+<Warning>
+  Reordering is **manual** — there's no `/gsd reorder` command yet. Edit carefully.
+</Warning>
+
+### Delete
+
+Remove a queued milestone entirely:
+
+```bash
+# Delete M006 (decided not to build it)
+rm -rf .gsd/milestones/M006
+
+# Auto-mode will skip M006 and advance to M007
+```
+
+## Related Commands
+
+<CardGroup cols={2}>
+
+<Card title="/gsd" icon="wand-magic-sparkles" href="/commands/gsd">
+  Create and start a milestone
+</Card>
+
+<Card title="/gsd status" icon="chart-line" href="/commands/gsd-status">
+  View all milestones
+</Card>
+
+<Card title="/gsd discuss" icon="comments" href="/commands/gsd-discuss">
+  Interview for a specific slice
+</Card>
+
+<Card title="/gsd auto" icon="play" href="/commands/gsd-auto">
+  Execute queued milestones
+</Card>
+
+</CardGroup>

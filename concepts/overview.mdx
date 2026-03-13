@@ -1,0 +1,155 @@
+---
+title: Core Concepts Overview
+description: Understanding GSD's architecture and design philosophy
+---
+
+## What Makes GSD Different
+
+GSD 2 isn't a prompt framework — it's a **TypeScript application that controls the agent session**. This fundamental shift from v1 enables true automation:
+
+<CardGroup cols={2}>
+  <Card title="Context Control" icon="window-restore">
+    Fresh session per task. No accumulated garbage. No quality degradation.
+  </Card>
+  <Card title="Git Strategy" icon="code-branch">
+    Branch-per-slice with squash merge. Clean history. Atomic rollback.
+  </Card>
+  <Card title="Crash Recovery" icon="rotate">
+    Lock files + session forensics. Resume with full context after crashes.
+  </Card>
+  <Card title="Cost Tracking" icon="chart-line">
+    Per-unit token/cost ledger. Budget ceilings. Real-time dashboards.
+  </Card>
+</CardGroup>
+
+## The Evolution: v1 → v2
+
+| Capability | v1 (Prompt Framework) | v2 (Agent Application) |
+|------------|----------------------|------------------------|
+| Runtime | Claude Code slash commands | Standalone CLI via Pi SDK |
+| Context management | Hope the LLM doesn't fill up | Fresh session per task, programmatic |
+| Auto mode | LLM self-loop | State machine reading `.gsd/` files |
+| Git strategy | LLM writes git commands | Programmatic branch-per-slice |
+| Cost tracking | None | Per-unit ledger with dashboard |
+| Stuck detection | None | Retry once, then stop with diagnostics |
+
+## Architecture at a Glance
+
+GSD is built on the [Pi SDK](https://github.com/badlogic/pi-mono), which gives it direct TypeScript access to the agent harness:
+
+```
+gsd (CLI binary)
+  └─ loader.ts          Sets PI_PACKAGE_DIR, GSD env vars
+      └─ cli.ts         Wires SDK managers, loads extensions
+          ├─ onboarding.ts   First-run setup wizard
+          ├─ wizard.ts       Env hydration from auth.json
+          ├─ resource-loader.ts  Syncs bundled extensions/agents
+          └─ src/resources/
+              ├─ extensions/gsd/    Core GSD extension
+              ├─ extensions/...     12 supporting extensions
+              ├─ agents/            scout, researcher, worker
+              └─ GSD-WORKFLOW.md    Manual bootstrap protocol
+```
+
+**Key design decisions:**
+
+- **State lives on disk** — `.gsd/` is the source of truth. Auto mode reads it, writes it, and advances based on what it finds. No in-memory state survives across sessions.
+- **Two-file loader pattern** — `loader.ts` sets all env vars with zero SDK imports, then dynamic-imports `cli.ts`. This ensures `PI_PACKAGE_DIR` is set before any SDK code evaluates.
+- **Always-overwrite sync** — `npm update -g` takes effect immediately. Bundled extensions and agents are synced to `~/.gsd/agent/` on every launch.
+
+## The Work Hierarchy
+
+GSD structures work into three levels:
+
+```
+Milestone  →  a shippable version (4-10 slices)
+  Slice    →  one demoable vertical capability (1-7 tasks)
+    Task   →  one context-window-sized unit of work
+```
+
+<Note>
+  **The iron rule:** a task must fit in one context window. If it can't, it's two tasks.
+</Note>
+
+This hierarchy isn't just conceptual — it's enforced by the state machine. Each level has clear completion criteria, and GSD won't advance until they're met.
+
+## How Auto Mode Works
+
+Auto mode is a state machine driven by files on disk:
+
+1. **Read disk state** — `deriveState(basePath)` scans `.gsd/` to determine current phase
+2. **Determine next unit** — Research? Plan? Execute task? Complete slice?
+3. **Create fresh session** — `ctx.newSession()` gives 200k clean tokens
+4. **Inject focused prompt** — Pre-inline all context: task plans, summaries, decisions
+5. **Let LLM execute** — Agent writes code, runs tests, commits
+6. **Read disk state again** — Loop to step 1
+
+<Info>
+  Every task, every research phase, every planning step gets a **clean context window**. No "I'll be more concise now."
+</Info>
+
+## The State Machine
+
+Each slice flows through phases automatically:
+
+```
+Research → Plan → Execute (per task) → Complete → Reassess Roadmap → Next Slice
+```
+
+- **Research** scouts the codebase and relevant docs
+- **Plan** decomposes the slice into tasks with must-haves
+- **Execute** runs each task in a fresh context with only relevant files
+- **Complete** writes summary, UAT script, marks roadmap, commits
+- **Reassess** checks if the roadmap still makes sense
+
+[Learn more about the state machine →](/concepts/state-machine)
+
+## Context Engineering
+
+The dispatch prompt includes inlined:
+
+- Task plans with must-haves
+- Slice plans and demo criteria
+- Prior task summaries
+- Dependency summaries from other slices
+- Roadmap excerpts
+- Decisions register
+
+**The LLM starts with everything it needs** instead of spending tool calls reading files.
+
+[Learn more about context engineering →](/concepts/context-engineering)
+
+## Git Strategy
+
+Each slice gets its own branch (`gsd/M001/S01`). Tasks commit atomically on the branch. When the slice completes, it's **squash-merged to main** as one clean commit:
+
+```
+main:
+  docs(M001/S04): workflow documentation and examples
+  fix(M001/S03): bug fixes and doc corrections
+  feat(M001/S02): API endpoints and middleware
+  feat(M001/S01): data model and type system
+```
+
+One commit per slice on main. Individual slices are revertable. Git bisect works.
+
+[Learn more about git strategy →](/concepts/git-strategy)
+
+## What's Next
+
+Dive deeper into each concept:
+
+<CardGroup cols={2}>
+  <Card title="Milestones, Slices, Tasks" icon="list-check" href="/concepts/milestones-slices-tasks">
+    The work hierarchy and "one task = one context window" rule
+  </Card>
+  <Card title="State Machine" icon="diagram-project" href="/concepts/state-machine">
+    How phases flow: Research → Plan → Execute → Complete → Reassess
+  </Card>
+  <Card title="Context Engineering" icon="brain" href="/concepts/context-engineering">
+    What files get inlined and why fresh sessions matter
+  </Card>
+  <Card title="Git Strategy" icon="code-branch" href="/concepts/git-strategy">
+    Branch-per-slice with squash merge explained
+  </Card>
+</CardGroup>

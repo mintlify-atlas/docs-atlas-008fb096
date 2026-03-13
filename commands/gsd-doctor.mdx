@@ -1,0 +1,256 @@
+---
+title: "gsd doctor"
+description: "Diagnose and fix GSD project issues"
+---
+
+## Overview
+
+The `/gsd doctor` command scans your GSD project for structural issues, missing artifacts, completion drift, and requirement status problems. It can automatically fix many common issues and provides detailed reports for manual intervention.
+
+## Syntax
+
+```bash
+/gsd doctor [mode] [scope]
+```
+
+## Modes
+
+<ParamField path="audit" type="string">
+  Runs a comprehensive audit showing all issues including warnings. Does not fix anything. Useful for understanding project health.
+</ParamField>
+
+<ParamField path="fix" type="string">
+  Automatically fixes structural issues like missing directories, unchecked completion boxes, and missing placeholder files. Updates STATE.md after fixes.
+</ParamField>
+
+<ParamField path="heal" type="string">
+  Fixes issues automatically (like `fix` mode) then dispatches remaining issues to the LLM for intelligent resolution. The agent will address content-quality and requirement-tracking issues.
+</ParamField>
+
+<Note>
+If no mode is specified, doctor runs in `audit` mode by default.
+</Note>
+
+## Scope
+
+Optionally specify which part of the project to check:
+
+<ParamField path="M###" type="string">
+  Check only the specified milestone (e.g., `M001`)
+</ParamField>
+
+<ParamField path="M###/S##" type="string">
+  Check only the specified slice (e.g., `M001/S01`)
+</ParamField>
+
+<Note>
+If no scope is specified, doctor automatically checks the active milestone/slice, or falls back to checking all milestones.
+</Note>
+
+## Issue Types
+
+### Structural Issues (Auto-Fixable)
+
+<ParamField path="missing_tasks_dir" type="error">
+  A slice directory is missing its `tasks/` subdirectory. **Fix:** Creates the directory.
+</ParamField>
+
+<ParamField path="task_summary_without_done_checkbox" type="warning">
+  A task has a summary file but isn't marked done in the slice plan. **Fix:** Marks the task as done in the plan.
+</ParamField>
+
+<ParamField path="all_tasks_done_roadmap_not_checked" type="error">
+  All tasks are complete but the slice isn't checked off in the roadmap. **Fix:** Checks the slice in the roadmap.
+</ParamField>
+
+<ParamField path="all_tasks_done_missing_slice_summary" type="error">
+  All tasks are done but the slice summary is missing. **Fix:** Creates a placeholder summary.
+</ParamField>
+
+<ParamField path="all_tasks_done_missing_slice_uat" type="warning">
+  All tasks are done but the UAT file is missing. **Fix:** Creates a placeholder UAT script.
+</ParamField>
+
+### Content Issues (Agent-Resolvable)
+
+<ParamField path="task_done_must_haves_not_verified" type="warning">
+  A task has must-haves in its plan but the summary doesn't verify them all. **Resolution:** Agent reviews and updates the summary.
+</ParamField>
+
+<ParamField path="slice_checked_missing_summary" type="error">
+  The roadmap marks a slice complete but the summary file is missing. **Resolution:** Agent regenerates the summary or fixes the roadmap.
+</ParamField>
+
+<ParamField path="slice_checked_missing_uat" type="warning">
+  The roadmap marks a slice complete but the UAT file is missing. **Resolution:** Agent creates the UAT script.
+</ParamField>
+
+<ParamField path="all_slices_done_missing_milestone_summary" type="warning">
+  All slices are complete but the milestone summary is missing. **Resolution:** Agent creates the milestone summary to unblock progress.
+</ParamField>
+
+### Blocker Detection
+
+<ParamField path="blocker_discovered_no_replan" type="warning">
+  A task reported `blocker_discovered: true` but no REPLAN.md exists yet. The slice may be stuck. **Resolution:** Agent creates a replan document.
+</ParamField>
+
+### Requirement Issues
+
+<ParamField path="active_requirement_missing_owner" type="error">
+  A requirement is marked Active but has no primary owning slice assigned.
+</ParamField>
+
+<ParamField path="blocked_requirement_missing_reason" type="warning">
+  A requirement is marked Blocked but has no explanation in the Notes field.
+</ParamField>
+
+### Preferences Issues
+
+<ParamField path="invalid_preferences" type="warning">
+  GSD preferences file has validation errors (invalid field types, malformed skill rules, etc.).
+</ParamField>
+
+## Examples
+
+### Quick Health Check
+
+```bash
+/gsd doctor
+```
+
+**Output:**
+```
+GSD doctor report.
+Scope: M001/S02
+Issues: 3 total · 1 error(s) · 2 warning(s) · 3 fixable
+Top issue types:
+- task_done_missing_summary: 1
+- slice_checked_missing_uat: 1
+- task_done_must_haves_not_verified: 1
+Priority issues:
+- [ERROR] M001/S02/T03: Task T03 is marked done but summary is missing (.gsd/milestones/M001/S02/tasks/T03-SUMMARY.md)
+- [WARN] M001/S02: Roadmap marks S02 complete but UAT file is missing (.gsd/milestones/M001/S02/S02-UAT.md)
+- [WARN] M001/S02/T02: Task T02 has 3 must-haves but summary addresses only 1 (.gsd/milestones/M001/S02/tasks/T02-SUMMARY.md)
+```
+
+### Auto-Fix Structural Issues
+
+```bash
+/gsd doctor fix
+```
+
+**Output:**
+```
+GSD doctor report.
+Scope: M001
+Issues: 5 total · 2 error(s) · 3 warning(s) · 5 fixable
+Fixes applied:
+- created .gsd/milestones/M001/S02/tasks
+- marked T02 done in .gsd/milestones/M001/S02/S02-PLAN.md
+- marked S01 done in .gsd/milestones/M001/M001-ROADMAP.md
+- created placeholder .gsd/milestones/M001/S02/S02-SUMMARY.md
+- updated .gsd/STATE.md
+```
+
+### Full Audit with Warnings
+
+```bash
+/gsd doctor audit
+```
+
+Shows all issues including low-severity warnings that are normally hidden.
+
+### Heal Mode (Agent-Assisted)
+
+```bash
+/gsd doctor heal M001/S02
+```
+
+**Output:**
+```
+GSD doctor heal prep.
+Scope: M001/S02
+Issues: 4 total · 1 error(s) · 3 warning(s) · 2 fixable
+Fixes applied:
+- marked T03 done in .gsd/milestones/M001/S02/S02-PLAN.md
+- created placeholder .gsd/milestones/M001/S02/S02-SUMMARY.md
+Doctor heal dispatched 2 issue(s) to the LLM.
+```
+
+The agent then receives a structured prompt with the issues and fixes them.
+
+### Audit Specific Milestone
+
+```bash
+/gsd doctor audit M002
+```
+
+Checks only milestone M002 and all its slices.
+
+### Audit Specific Slice
+
+```bash
+/gsd doctor audit M001/S03
+```
+
+Checks only slice S03 in milestone M001.
+
+## Fix Capabilities
+
+Doctor can automatically fix:
+
+1. **Missing directories**: Creates `tasks/` directories
+2. **Completion drift**: Marks tasks/slices done when artifacts exist
+3. **Missing summaries**: Creates placeholder summary files
+4. **Missing UAT files**: Creates placeholder UAT scripts
+5. **State drift**: Rebuilds STATE.md from current disk state
+
+## What Doctor Cannot Fix
+
+Some issues require manual or agent intervention:
+
+- Content quality issues (incomplete summaries, missing decisions)
+- Requirement tracking (assigning owners, documenting blockers)
+- Must-have verification gaps
+- Task summaries when tasks aren't actually complete
+
+## Integration with Auto-Mode
+
+<Tip>
+Run `/gsd doctor heal` after recovering from crashes or manual edits to ensure the project state is consistent before resuming auto-mode.
+</Tip>
+
+The doctor's "heal" mode is designed to work with GSD's workflow system. It:
+
+1. Fixes structural issues automatically
+2. Formats remaining issues for LLM consumption
+3. Dispatches to the agent with full context
+4. Updates STATE.md after all fixes
+
+## Report Format
+
+Doctor reports include:
+
+- **Scope**: Which parts of the project were checked
+- **Summary**: Total issues, errors, warnings, fixable count
+- **Top issue types**: Most common problems by frequency
+- **Priority issues**: First 12 issues (or 50 in audit mode)
+- **Fixes applied**: What was automatically repaired
+
+## Performance
+
+Doctor is fast and can run frequently:
+
+- Full project scan: ~100ms for typical projects
+- Single milestone: ~20ms
+- Single slice: ~5ms
+
+<Tip>
+Run `/gsd doctor` before starting work or after pulling changes to catch issues early.
+</Tip>
+
+## Related Commands
+
+- [/gsd status](/commands/gsd-status) - View project progress dashboard
+- [/gsd prefs status](/commands/gsd-prefs) - Check preferences validation

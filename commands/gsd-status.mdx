@@ -1,0 +1,360 @@
+---
+title: "/gsd status"
+description: "View progress dashboard with milestones, slices, tasks, and cost metrics"
+---
+
+## Overview
+
+The `/gsd status` command opens an interactive dashboard overlay showing your project's progress, structure, and metrics. It reads state from `.gsd/` files and presents a comprehensive view of where you are.
+
+<Tip>
+  The dashboard is **read-only** and can be opened any time — even while auto-mode is running (press **Ctrl+Alt+G**).
+</Tip>
+
+## Basic Usage
+
+```bash
+# Open the dashboard
+/gsd status
+
+# Keyboard shortcut (works any time)
+Ctrl+Alt+G
+```
+
+## What It Shows
+
+The status dashboard has **three main sections**:
+
+### 1. Milestone Registry
+
+Lists all milestones with their status:
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  MILESTONES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ✓ M001: Payment Integration                  complete
+  ● M002: Webhook System                        active
+  ○ M003: Dashboard UI                          pending
+  ○ M004: Analytics & Reporting                 pending
+
+  Progress: 1/4 milestones complete (25%)
+```
+
+**Status indicators:**
+
+- `✓` — Complete (has summary, all slices done)
+- `●` — Active (currently being worked on)
+- `○` — Pending (not started, or blocked by dependencies)
+
+### 2. Active Milestone Detail
+
+Shows the roadmap and current progress for the active milestone:
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  M002: WEBHOOK SYSTEM
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Phase: executing
+Branch: gsd/M002/S02
+
+Roadmap:
+  [x] S01: Webhook receiver endpoint
+  [ ] S02: Signature validation         ← active
+  [ ] S03: Event routing & processing
+
+Active slice: S02 — Signature validation
+  [x] T01: Add crypto dependencies
+  [x] T02: Implement HMAC verification
+  [ ] T03: Add timestamp validation     ← next
+  [ ] T04: Write integration tests
+
+  Tasks: 2/4 complete (50%)
+```
+
+**Roadmap notation:**
+
+- `[x]` — Slice complete
+- `[ ]` — Slice pending
+- `← active` — Currently executing
+
+### 3. Metrics & Cost
+
+Shows cumulative project-wide metrics:
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  METRICS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Total cost: $3.47
+Total tokens: 487k (↑312k ↓98k R45k W32k)
+Units executed: 24
+
+Recent units:
+  execute-task M002/S02/T02     $0.18   23k tokens   4m 32s
+  execute-task M002/S02/T01     $0.12   18k tokens   3m 12s
+  plan-slice M002/S02           $0.08   12k tokens   2m 04s
+```
+
+<Note>
+  Metrics are read from `.gsd/metrics.json` which persists across all auto-mode sessions.
+</Note>
+
+## Dashboard Overlay
+
+The dashboard opens as a **centered overlay** on top of your conversation:
+
+```
+┌────────────────────────────────────────────────────┐
+│                                                    │
+│  [Dashboard content here]                          │
+│                                                    │
+│  Press Escape to close                             │
+└────────────────────────────────────────────────────┘
+```
+
+- **Width:** 70% of terminal (min 60 chars)
+- **Height:** Max 90% of terminal
+- **Scrollable:** Yes (if content exceeds height)
+- **Dismissable:** Press Escape to close
+
+## When to Use
+
+### Use `/gsd status` when:
+
+- **Checking progress** — "How many slices are left?"
+- **Understanding structure** — "What's the roadmap?"
+- **Reviewing costs** — "How much have I spent?"
+- **Debugging** — "Why did auto-mode stop?"
+- **Resuming after a break** — "Where was I?"
+
+### Quick Check vs Full Review
+
+**Quick check** (while auto-mode runs):
+
+```bash
+Ctrl+Alt+G
+# Glance at progress, press Escape
+# Auto-mode continues
+```
+
+**Full review** (before starting):
+
+```bash
+/gsd status
+# Review roadmap, check costs, understand blockers
+# Then: /gsd auto to start
+```
+
+## State Files Read
+
+The status command reads:
+
+<AccordionGroup>
+  <Accordion title="Milestone files">
+    - `M001-ROADMAP.md` — slice list, dependencies, progress
+    - `M001-CONTEXT.md` — milestone description, dependencies
+    - `M001-SUMMARY.md` — completion summary (if exists)
+  </Accordion>
+  
+  <Accordion title="Slice files">
+    - `S01-PLAN.md` — task list, must-haves, estimates
+    - `S01-SUMMARY.md` — what was built (if complete)
+  </Accordion>
+  
+  <Accordion title="Task files">
+    - `T01-SUMMARY.md` — individual task completion records
+  </Accordion>
+  
+  <Accordion title="Metadata">
+    - `STATE.md` — derived state snapshot
+    - `.gsd/metrics.json` — cost and token tracking
+    - `.gsd/completed-units.json` — idempotency tracking
+  </Accordion>
+</AccordionGroup>
+
+<Warning>
+  If `.gsd/` files are corrupted or inconsistent, status may show errors. Run `/gsd doctor --fix` to repair.
+</Warning>
+
+## Interpreting Phases
+
+The dashboard shows the **current phase** of the active milestone:
+
+| Phase | Meaning |
+|-------|----------|
+| `pre-planning` | No roadmap yet — needs milestone planning |
+| `planning` | Roadmap exists, active slice needs a plan |
+| `executing` | Active task being worked on |
+| `summarizing` | All tasks done, slice needs summary |
+| `completing-milestone` | All slices done, milestone needs summary |
+| `replanning-slice` | Blocker found, slice plan being revised |
+| `complete` | All work done |
+| `blocked` | Dependency or error preventing progress |
+
+<Tip>
+  The phase determines what `/gsd auto` will do next. Use status to **understand the state machine**.
+</Tip>
+
+## Blockers Section
+
+If the project is blocked, status shows why:
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  BLOCKERS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ⚠ M003 is waiting on unmet deps: M004
+  ⚠ No slice eligible — check dependency ordering
+```
+
+**Common blockers:**
+
+- **Milestone dependencies** — M003 depends on M004, but M004 isn't complete yet
+- **Slice dependencies** — S03 depends on S02, but S02 isn't done
+- **Missing files** — Expected artifact not found (e.g., T03-SUMMARY.md)
+- **Merge conflicts** — Slice merge failed
+
+## Cost Breakdown
+
+The metrics section shows:
+
+```
+Total cost: $3.47
+Total tokens: 487k (↑312k ↓98k R45k W32k)
+```
+
+**Token notation:**
+
+- `↑312k` — Input tokens sent to LLM
+- `↓98k` — Output tokens generated by LLM
+- `R45k` — Cache read (prompt caching)
+- `W32k` — Cache write (prompt caching)
+
+<Note>
+  Cache read is **5× cheaper** than input tokens (Anthropic pricing). Effective usage can reduce costs by 50-80%.
+</Note>
+
+## Recent Units
+
+Shows the last 5-10 completed units:
+
+```
+Recent units:
+  execute-task M002/S02/T03     $0.21   28k tokens   5m 18s
+  execute-task M002/S02/T02     $0.18   23k tokens   4m 32s
+  complete-slice M002/S01       $0.14   19k tokens   3m 45s
+```
+
+Use this to:
+
+- **Spot expensive units** — which tasks cost the most?
+- **Estimate remaining cost** — if tasks average $0.20, 15 tasks left = ~$3
+- **Debug performance** — why did T03 take 5 minutes?
+
+## Examples
+
+<CodeGroup>
+
+```bash Check progress mid-execution
+# Auto-mode running
+/gsd auto
+
+# Quick status check
+Ctrl+Alt+G
+
+# Dashboard shows:
+#   M002: 2/3 slices complete
+#   S03: 1/4 tasks complete
+#   Total cost: $1.23
+
+# Press Escape, auto-mode continues
+```
+
+```bash Review before starting
+# Before launching auto-mode
+/gsd status
+
+# Dashboard shows:
+#   M002: 0/3 slices complete
+#   Phase: planning
+#   Next: Plan S01
+#   Estimated: ~20 tasks, $4-6 if similar to M001
+
+# Decide: looks good, start auto-mode
+/gsd auto
+```
+
+```bash Debug a blocker
+# Auto-mode stopped unexpectedly
+/gsd status
+
+# Dashboard shows:
+#   Phase: blocked
+#   Blocker: No slice eligible — check dependency ordering
+#   
+# Open roadmap to fix:
+code .gsd/milestones/M002/M002-ROADMAP.md
+
+# Fix dependency chain, then resume
+/gsd auto
+```
+
+</CodeGroup>
+
+## Keyboard Shortcuts
+
+While the dashboard is open:
+
+| Key | Action |
+|-----|--------|
+| `Escape` | Close dashboard |
+| `↑` / `↓` | Scroll (if content overflows) |
+| `Home` | Jump to top |
+| `End` | Jump to bottom |
+
+## Comparison: Status vs State File
+
+### `/gsd status` (Dashboard)
+
+- **Interactive** — overlay with scrolling
+- **Formatted** — colors, progress bars, sections
+- **Selective** — shows only relevant info
+- **Ephemeral** — closes when dismissed
+
+### `STATE.md` (File)
+
+- **Persistent** — file on disk
+- **Plain text** — no formatting
+- **Complete** — includes all derived state fields
+- **Machine-readable** — JSON-like structure
+
+<Tip>
+  Use **status** for quick human review, **STATE.md** for debugging or external tools.
+</Tip>
+
+## Related Commands
+
+<CardGroup cols={2}>
+
+<Card title="/gsd" icon="wand-magic-sparkles" href="/commands/gsd">
+  Launch context-aware wizard
+</Card>
+
+<Card title="/gsd auto" icon="play" href="/commands/gsd-auto">
+  Start autonomous execution
+</Card>
+
+<Card title="/gsd doctor" icon="stethoscope" href="/commands/gsd">
+  Validate and fix .gsd/ state
+</Card>
+
+<Card title="/gsd queue" icon="list" href="/commands/gsd-queue">
+  Queue future milestones
+</Card>
+
+</CardGroup>

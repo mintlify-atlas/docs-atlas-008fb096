@@ -1,0 +1,295 @@
+---
+title: "exit"
+description: "Immediately terminate the GSD session"
+---
+
+## Overview
+
+The `/exit` command immediately terminates the GSD process without cleanup or confirmation. It's the fastest way to quit GSD.
+
+<Warning>
+This command exits **immediately** without saving state or confirming. Use it when you're sure you want to quit.
+</Warning>
+
+## Syntax
+
+```bash
+/exit
+```
+
+No arguments. No confirmation.
+
+## Behavior
+
+### Immediate Exit
+
+When you run `/exit`:
+
+1. Process terminates instantly (`process.exit(0)`)
+2. No cleanup hooks run
+3. No confirmation dialog
+4. No state saving
+
+### What Gets Saved
+
+Before `/exit` runs, most state is already persisted:
+
+- **GSD artifacts**: All `.gsd/` files are on disk
+- **Conversation history**: Saved incrementally during the session
+- **Preferences**: Loaded from disk, not cached
+- **Worktree state**: Git worktrees are managed by Git, not GSD
+
+### What Doesn't Get Saved
+
+- **Unsaved editor content**: Text in the input field is lost
+- **Background processes**: Any running `bg_shell` processes continue (they're detached)
+- **In-progress agent turns**: If the agent is mid-response, it's interrupted
+
+## Use Cases
+
+### Quick Exit
+
+When you're done and want to quit immediately:
+
+```bash
+/exit
+```
+
+### Stuck Agent
+
+If the agent is unresponsive and `Escape` doesn't help:
+
+```bash
+/exit
+```
+
+### Terminal Closing
+
+Instead of `Ctrl+D` or closing the terminal window:
+
+```bash
+/exit
+```
+
+## Alternatives
+
+### Graceful Exit (Ctrl+C)
+
+**Keyboard:** `Ctrl+C`
+
+**Behavior:**
+- Triggers `session_shutdown` event
+- Saves activity logs (if in auto-mode)
+- Cleans up resources
+- Closes background processes gracefully
+
+<Tip>
+Use `Ctrl+C` instead of `/exit` when you're in auto-mode or have background processes running.
+</Tip>
+
+### Abort Agent Turn (Escape)
+
+**Keyboard:** `Escape`
+
+**Behavior:**
+- Stops the current agent turn
+- Pauses auto-mode (doesn't exit)
+- Preserves conversation history
+- Allows inspection of partial work
+
+**Use when:**
+- Agent is going in the wrong direction
+- You want to intervene mid-task
+- Testing/debugging agent behavior
+
+## Session Lifecycle
+
+### Normal Shutdown (Ctrl+C)
+
+```
+1. User presses Ctrl+C
+2. session_shutdown event fires
+3. Extensions save state:
+   - Auto-mode saves activity log
+   - Background processes save manifest
+   - Worktrees update tracking
+4. Process exits cleanly
+```
+
+### Immediate Exit (/exit)
+
+```
+1. User types /exit
+2. process.exit(0) runs immediately
+3. [No cleanup hooks]
+4. Process terminates
+```
+
+## Background Processes
+
+### What Happens to bg_shell Processes
+
+Background processes started with `bg_shell` are **detached** from the GSD process:
+
+- **On /exit**: Processes continue running
+- **On Ctrl+C**: Processes continue running (unless explicitly killed)
+
+**To check running processes after restart:**
+
+```bash
+# Start GSD again
+pi
+
+# Check for surviving processes
+/bg list
+```
+
+GSD detects processes from previous sessions and alerts you.
+
+### Killing Background Processes
+
+Before exiting, kill background processes if needed:
+
+```bash
+# List all
+/bg list
+
+# Kill specific
+bg_shell kill <id>
+
+# Or kill all
+ps aux | grep <command>
+kill <pid>
+```
+
+## Auto-Mode Considerations
+
+### During Auto-Mode
+
+If you `/exit` during auto-mode:
+
+- **Lock file**: Remains on disk (`.gsd/.auto-lock`)
+- **Next start**: GSD detects interrupted session
+- **Resume**: You can resume with `/gsd auto` (it will prompt)
+
+### Recommended: Pause First
+
+```bash
+# 1. Pause auto-mode
+Escape  # Or /gsd stop
+
+# 2. Save progress
+[Auto-mode saves activity log]
+
+# 3. Exit cleanly
+Ctrl+C  # Or /exit
+```
+
+## Recovery
+
+If you exited mid-work:
+
+### Check GSD State
+
+```bash
+pi  # Restart
+/gsd status
+```
+
+Views the last saved state.
+
+### Resume Auto-Mode
+
+```bash
+/gsd auto
+```
+
+If a lock file exists, GSD prompts:
+```
+Auto-mode was interrupted. Resume from last checkpoint?
+  [Resume] [Start fresh]
+```
+
+### Check Background Processes
+
+```bash
+ps aux | grep node  # Or your process name
+```
+
+Kill orphaned processes if needed.
+
+## Platform Differences
+
+### Unix/macOS
+
+```bash
+exit code: 0
+```
+
+Clean exit, no error reported to shell.
+
+### Windows
+
+```cmd
+Exit Code: 0
+```
+
+Same behavior. Background processes (if detached via `start /B`) continue running.
+
+## Implementation
+
+From `gsd/index.ts:68-73`:
+
+```typescript
+pi.registerCommand("exit", {
+  description: "Exit GSD immediately",
+  handler: async (_ctx) => {
+    process.exit(0);
+  },
+});
+```
+
+**Rationale:** Fastest possible exit. No async cleanup that could hang.
+
+## Comparison
+
+| Method | Speed | Cleanup | Safe for Auto-Mode | Safe for bg_shell |
+|--------|-------|---------|-------------------|------------------|
+| `/exit` | Instant | None | ⚠️ Leaves lock file | ⚠️ Processes continue |
+| `Ctrl+C` | Fast | Full | ✅ Saves activity log | ⚠️ Processes continue |
+| `Escape` then `Ctrl+C` | Normal | Full | ✅ Saves + pauses | ✅ Can clean up first |
+
+## Best Practices
+
+### When to Use /exit
+
+- Quick exit after normal work
+- Terminal is closing anyway
+- No auto-mode or background processes running
+
+### When NOT to Use /exit
+
+- During auto-mode (use `Escape` + `Ctrl+C`)
+- With background processes (kill them first)
+- Mid-conversation (use `Escape` to pause)
+
+### Recommended Exit Flow
+
+```bash
+# 1. Stop auto-mode if running
+/gsd stop  # Or Escape
+
+# 2. Check for background processes
+/bg list
+
+# 3. Kill background processes if needed
+bg_shell kill <id>
+
+# 4. Exit cleanly
+Ctrl+C  # Or /exit
+```
+
+## Related Commands
+
+- [/gsd stop](/commands/gsd-stop) - Stop auto-mode gracefully
+- [Keyboard Shortcuts](/commands/keyboard-shortcuts) - Ctrl+C, Escape, and other keys

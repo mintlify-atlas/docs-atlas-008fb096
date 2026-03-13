@@ -1,0 +1,340 @@
+---
+title: Cost Tracking
+description: Token usage and cost metrics for every unit of work
+---
+
+GSD tracks token usage and cost for every unit of work across auto-mode sessions. Metrics are captured before each context wipe, persisted to `.gsd/metrics.json`, and surfaced in the dashboard.
+
+## How It Works
+
+### Data Flow
+
+<Steps>
+  <Step title="Capture usage data">
+    Before `newSession()` wipes context, `snapshotUnitMetrics()` scans session entries for `AssistantMessage` usage data.
+    
+    Each assistant message includes:
+    
+    ```typescript
+    usage: {
+      input: 45231,          // Input tokens
+      output: 1872,          // Output tokens
+      cacheRead: 38420,      // Cache read tokens
+      cacheWrite: 6811,      // Cache write tokens
+      totalTokens: 92334,
+      cost: 0.23             // USD cost for this message
+    }
+    ```
+  </Step>
+
+  <Step title="Aggregate per unit">
+    All assistant messages in the session are summed:
+    
+    ```typescript
+    interface UnitMetrics {
+      type: string;            // e.g. "execute-task"
+      id: string;              // e.g. "M001/S01/T02"
+      model: string;           // Model ID used
+      startedAt: number;       // Timestamp when unit started
+      finishedAt: number;      // Timestamp when unit finished
+      tokens: TokenCounts;     // Summed token usage
+      cost: number;            // Total USD cost
+      toolCalls: number;       // Tool calls made
+      assistantMessages: number;
+      userMessages: number;
+    }
+    ```
+  </Step>
+
+  <Step title="Append to ledger">
+    The unit record is appended to the in-memory ledger and flushed to `.gsd/metrics.json`.
+  </Step>
+
+  <Step title="Dashboard display">
+    The dashboard overlay (`Ctrl+Alt+G`) and `/gsd status` read from the in-memory ledger to show:
+    
+    - Per-unit cost and token breakdown
+    - Per-phase aggregates (research, planning, execution, completion)
+    - Per-slice totals
+    - Per-model breakdown
+    - Projected remaining cost based on slice averages
+  </Step>
+</Steps>
+
+### Ledger Structure
+
+`.gsd/metrics.json`:
+
+```json
+{
+  "version": 1,
+  "projectStartedAt": 1704067200000,
+  "units": [
+    {
+      "type": "research-milestone",
+      "id": "M001",
+      "model": "claude-sonnet-4-6",
+      "startedAt": 1704067200000,
+      "finishedAt": 1704067500000,
+      "tokens": {
+        "input": 45231,
+        "output": 1872,
+        "cacheRead": 38420,
+        "cacheWrite": 6811,
+        "total": 92334
+      },
+      "cost": 0.23,
+      "toolCalls": 47,
+      "assistantMessages": 12,
+      "userMessages": 3
+    },
+    {
+      "type": "execute-task",
+      "id": "M001/S01/T01",
+      "model": "claude-sonnet-4-6",
+      "startedAt": 1704067600000,
+      "finishedAt": 1704068200000,
+      "tokens": { ... },
+      "cost": 0.18,
+      ...
+    }
+  ]
+}
+```
+
+## Aggregations
+
+### By Phase
+
+GSD classifies each unit into a phase:
+
+| Unit Type | Phase |
+|-----------|-------|
+| `research-milestone`, `research-slice` | research |
+| `plan-milestone`, `plan-slice` | planning |
+| `execute-task` | execution |
+| `complete-slice` | completion |
+| `reassess-roadmap` | reassessment |
+
+Per-phase aggregates show:
+
+```typescript
+interface PhaseAggregate {
+  phase: "research" | "planning" | "execution" | "completion" | "reassessment";
+  units: number;          // Units completed in this phase
+  tokens: TokenCounts;    // Summed tokens
+  cost: number;           // Total cost
+  duration: number;       // Total milliseconds
+}
+```
+
+Dashboard example:
+
+```
+By Phase:
+  research:      3 units, 234k tokens, $1.23 (15min)
+  planning:      4 units, 189k tokens, $0.98 (12min)
+  execution:    23 units, 1.2M tokens, $8.45 (2h 15min)
+  completion:    3 units, 67k tokens, $0.34 (8min)
+```
+
+### By Slice
+
+Slice aggregates sum all units within a slice:
+
+```typescript
+interface SliceAggregate {
+  sliceId: string;        // e.g. "M001/S01"
+  units: number;
+  tokens: TokenCounts;
+  cost: number;
+  duration: number;
+}
+```
+
+Dashboard example:
+
+```
+By Slice:
+  M001/S01:  8 units, $2.34 (45min)
+  M001/S02:  7 units, $1.98 (38min)
+  M001/S03:  9 units, $2.67 (52min)
+```
+
+### By Model
+
+Model aggregates show cost per model when using mixed models:
+
+```typescript
+interface ModelAggregate {
+  model: string;
+  units: number;
+  tokens: TokenCounts;
+  cost: number;
+}
+```
+
+Dashboard example:
+
+```
+By Model:
+  claude-opus-4-6:   12 units, $4.56
+  claude-sonnet-4-6: 34 units, $6.23
+  openrouter/deepseek-r1: 8 units, $0.12
+```
+
+This lets you see exactly where your budget goes when using Opus for planning and Sonnet for execution.
+
+### Project Totals
+
+```typescript
+interface ProjectTotals {
+  units: number;
+  tokens: TokenCounts;
+  cost: number;
+  duration: number;
+  toolCalls: number;
+  assistantMessages: number;
+  userMessages: number;
+}
+```
+
+Shown at the top of the dashboard:
+
+```
+Project Totals:
+  54 units completed
+  2.3M tokens ($10.89)
+  3h 42min elapsed
+  1,247 tool calls
+```
+
+## Cost Projections
+
+GSD estimates remaining cost based on completed slice averages:
+
+```typescript
+function formatCostProjection(
+  completedSlices: SliceAggregate[],
+  remainingCount: number,
+  budgetCeiling?: number,
+): string[]
+```
+
+Example output:
+
+```
+Projected remaining: $8.40 ($2.10/slice avg × 4 remaining)
+```
+
+If a budget ceiling is set and reached:
+
+```
+Budget ceiling $15.00 reached (spent $15.23)
+```
+
+Auto-mode pauses when the ceiling is hit.
+
+<Note>
+  Projections are based on **slice-level aggregates only** (sliceId contains `/`). Bare milestone aggregates are excluded. Projections require at least 2 completed slices for reliability.
+</Note>
+
+## Budget Ceiling
+
+Set a budget ceiling in preferences:
+
+```yaml
+# .gsd/preferences.md or ~/.gsd/preferences.md
+---
+budget_ceiling: 50.00
+---
+```
+
+When total cost reaches the ceiling, auto-mode pauses with a notification:
+
+```
+⚠ Budget ceiling $50.00 reached (spent $50.12)
+Auto-mode paused. Adjust the ceiling in /gsd prefs to continue.
+```
+
+You can:
+- Increase the ceiling
+- Clear the ceiling (remove the setting)
+- Continue in step mode (`/gsd next`)
+
+## Token Breakdown
+
+### Cache Efficiency
+
+Prompt caching reduces cost significantly. The dashboard shows:
+
+```
+Tokens:
+  Input:       1.2M ($4.56)
+  Output:      234k ($2.34)
+  Cache read:  980k ($0.98)  ← 4.6× cheaper than fresh input
+  Cache write: 120k ($1.20)
+```
+
+Cache read tokens are billed at a fraction of input token cost (~1/10 for Anthropic models). High cache read ratios mean GSD is effectively reusing context across units.
+
+### Per-Unit Breakdown
+
+The dashboard shows token counts per unit:
+
+```
+M001/S01/T02:
+  45k input, 1.8k output, 38k cache read, 6.8k cache write
+  $0.23 (12 tool calls, 6min)
+```
+
+This lets you identify expensive units and optimize:
+
+- High input tokens → context too large, split the task
+- High output tokens → agent is verbose, tune the model or prompt
+- Low cache read → context isn't reusing prior work
+
+## Dashboard Commands
+
+| Command | What it shows |
+|---------|---------------|
+| `/gsd status` | Full metrics dashboard in the chat |
+| `Ctrl+Alt+G` | Toggle dashboard overlay (live updates) |
+
+The overlay stays visible during auto-mode, showing real-time cost accumulation.
+
+## Metrics API
+
+For programmatic access:
+
+```typescript
+import { getLedger, aggregateByPhase, aggregateBySlice, getProjectTotals } from './metrics.js';
+
+const ledger = getLedger();
+if (ledger) {
+  const phases = aggregateByPhase(ledger.units);
+  const slices = aggregateBySlice(ledger.units);
+  const totals = getProjectTotals(ledger.units);
+  
+  console.log(`Total cost: ${formatCost(totals.cost)}`);
+}
+```
+
+## Related Files
+
+- `metrics.ts:100` — Snapshot unit metrics before context wipe
+- `metrics.ts:223` — Aggregate by phase
+- `metrics.ts:242` — Aggregate by slice
+- `metrics.ts:276` — Project totals
+- `metrics.ts:316` — Cost projection logic
+
+## See Also
+
+<CardGroup cols={2}>
+  <Card title="Preferences" icon="sliders" href="/configuration/preferences">
+    Set budget ceiling and per-phase models
+  </Card>
+  <Card title="Auto Mode" icon="robot" href="/usage/auto-mode">
+    How metrics are captured per unit
+  </Card>
+</CardGroup>

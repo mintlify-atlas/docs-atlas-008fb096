@@ -1,0 +1,407 @@
+---
+title: Verification
+description: How GSD validates completed work through the verification ladder
+---
+
+GSD verifies work using a **verification ladder** — a hierarchy of mechanical checks that runs from static analysis to behavioral testing, with human review only as a last resort.
+
+## The Verification Ladder
+
+From the README:
+
+> The verification ladder: static checks → command execution → behavioral testing → human review (only when the agent genuinely can't verify itself).
+
+GSD climbs the ladder until it finds a verification method that works for the current task.
+
+<Steps>
+  <Step title="Static checks">
+    **What it is:** Read files, parse code, check that expected artifacts exist.
+    
+    **Examples:**
+    - File `src/types.ts` exists
+    - Function `parseConfig` is exported
+    - Import `import { validateSchema } from './validator'` is present
+    
+    **When to use:** Verifying structure, existence, and wiring.
+    
+    **Agent behavior:** Use `read` tool, grep for patterns, check that key links exist.
+  </Step>
+
+  <Step title="Command execution">
+    **What it is:** Run a command and check its exit code or output.
+    
+    **Examples:**
+    - `npm run build` exits 0
+    - `npm test migrate` passes
+    - `curl http://localhost:3000/health` returns 200
+    
+    **When to use:** Verifying compilation, type checks, unit tests, simple integrations.
+    
+    **Agent behavior:** Use `bash` tool, capture exit codes, parse output for pass/fail.
+  </Step>
+
+  <Step title="Behavioral testing">
+    **What it is:** Run the system and observe behavior.
+    
+    **Examples:**
+    - Start the server, make an API request, verify the response
+    - Open the UI in a browser, click a button, verify the modal opens
+    - Send a webhook, check that the database records it
+    
+    **When to use:** Verifying end-to-end workflows, UI behavior, integration correctness.
+    
+    **Agent behavior:** Use `bg_shell` for long-running processes, `browser` tools for UI verification, database queries to check state.
+  </Step>
+
+  <Step title="Human review">
+    **What it is:** Ask the human to manually verify.
+    
+    **Examples:**
+    - "The UI looks correct — please verify the color scheme matches the design"
+    - "The email was sent — check your inbox to confirm formatting"
+    
+    **When to use:** Only when the agent genuinely can't verify itself (subjective quality, external services, design review).
+    
+    **Agent behavior:** Write a clear UAT script in `S01-UAT.md`, notify the user, mark the task as done pending review.
+  </Step>
+</Steps>
+
+<Warning>
+  **Human review is the last resort.** If the agent requests human review for something mechanically verifiable (like "check if the function exists"), the task plan was poorly written. Refine the must-haves to use a lower rung on the ladder.
+</Warning>
+
+## Must-Haves: The Verification Checklist
+
+Every task plan includes **must-haves** — mechanically checkable outcomes that prove the task is done.
+
+### Three Types
+
+<AccordionGroup>
+  <Accordion title="Truths">
+    Observable behaviors or facts about the system.
+    
+    **Good truths:**
+    - ✅ "User can sign up with email and password"
+    - ✅ "Migration script runs without errors"
+    - ✅ "TypeScript build passes"
+    - ✅ "API returns 404 for invalid IDs"
+    
+    **Bad truths:**
+    - ❌ "Code is clean" (subjective)
+    - ❌ "Everything works" (vague)
+    - ❌ "UI looks good" (subjective, unless you define "good" as a measurable criterion)
+    
+    **How to verify:**
+    - Command execution: `npm test` passes
+    - Behavioral testing: Make a request, check response
+    - Static checks: Function exists, type checks pass
+  </Accordion>
+
+  <Accordion title="Artifacts">
+    Files that must exist with real implementation, not stubs.
+    
+    **Examples:**
+    - `src/migrate/parser.ts` — with `parsePlanningDirectory()` exported
+    - `tests/worktree.test.ts` — with at least 5 test cases
+    - `docs/api/authentication.mdx` — with full endpoint documentation
+    
+    **How to verify:**
+    - Static checks: `read` the file, grep for expected exports/functions
+    - Command execution: Import succeeds, type checks pass
+  </Accordion>
+
+  <Accordion title="Key Links">
+    Imports and wiring between artifacts.
+    
+    **Examples:**
+    - `migrate/index.ts` imports and exports `parsePlanningDirectory`
+    - `worktree-command.ts` calls `createWorktree()` from `worktree-manager.ts`
+    - `App.tsx` renders `<DashboardOverlay />` when enabled
+    
+    **How to verify:**
+    - Static checks: Grep for the import statement
+    - Command execution: Type check passes (proves wiring is correct)
+    - Behavioral testing: Call the function, verify it works
+  </Accordion>
+</AccordionGroup>
+
+### Example: Task Plan with Must-Haves
+
+```yaml
+---
+slice: S01
+task: T02
+title: Migration parser
+done: false
+files:
+  - src/migrate/parser.ts
+  - tests/migrate-parser.test.ts
+---
+
+# Task T02: Migration parser
+
+Parse `.planning` directory structure into typed objects.
+
+## Must-Haves
+
+**Truths:**
+- Parser handles roadmap files with `<details>` blocks
+- Parser preserves `[x]` completion status
+- Parser consolidates research files in order
+- All tests pass
+
+**Artifacts:**
+- `src/migrate/parser.ts` with `parsePlanningDirectory()` exported
+- `tests/migrate-parser.test.ts` with at least 8 test cases
+
+**Key Links:**
+- `migrate/index.ts` exports `parsePlanningDirectory`
+- `migrate/command.ts` calls `parsePlanningDirectory(sourcePath)`
+```
+
+The agent verifies:
+
+1. **Static:** Files exist, exports are present
+2. **Command:** `npm test migrate-parser` passes
+3. **Behavioral:** Run the parser on a test `.planning` directory, check the output structure
+
+## Verification During Execution
+
+GSD verifies continuously, not just at the end:
+
+### Inline Verification
+
+After each significant change, the agent checks that the change worked:
+
+```typescript
+// 1. Make the change
+edit('src/parser.ts', oldCode, newCode);
+
+// 2. Verify it compiled
+bash('npm run build');
+// ✓ Exit code 0
+
+// 3. Verify the behavior
+bash('npm test parser');
+// ✓ All tests pass
+```
+
+This catches regressions immediately instead of discovering them at task completion.
+
+### Completion Verification
+
+Before marking a task done, the agent:
+
+1. **Re-reads the must-haves** from the task plan
+2. **Runs verification for each one** (static check, command, or behavioral test)
+3. **Reports pass/fail** for every must-have
+4. **Only marks done when all pass**
+
+If any must-have fails, the agent fixes it before proceeding.
+
+## UAT Scripts
+
+When a slice completes, GSD writes a **User Acceptance Test** script (`S01-UAT.md`):
+
+```markdown
+# UAT: Data Model Slice
+
+## Prerequisites
+
+- Node.js ≥ 20.6.0
+- Project dependencies installed (`npm install`)
+
+## Tests
+
+### 1. Types compile
+
+```bash
+npm run build
+```
+
+**Expected:** Exit code 0, no TypeScript errors.
+
+### 2. Unit tests pass
+
+```bash
+npm test types
+```
+
+**Expected:** All tests green.
+
+### 3. Types are exported
+
+```bash
+node -e "const t = require('./dist/types'); console.log(Object.keys(t));"
+```
+
+**Expected:** Output includes `GSDProject`, `GSDMilestone`, `GSDSlice`, `GSDTask`.
+
+## Sign-Off
+
+If all tests pass, the slice is complete. If any fail, file an issue with the failure details.
+```
+
+UAT scripts are:
+- **Human-readable** — anyone can run them
+- **Deterministic** — same input → same output
+- **Actionable** — clear pass/fail criteria
+
+<Note>
+  UAT scripts are for **human verification of the slice as a whole**, not for verifying individual tasks. Tasks are verified mechanically during execution.
+</Note>
+
+## Stuck Detection and Retry
+
+When a unit dispatches twice without producing the expected artifact, GSD treats it as **stuck**.
+
+<Steps>
+  <Step title="First failure">
+    The agent finished the unit but didn't mark it done or produce the expected output. GSD re-dispatches with a **deep diagnostic**:
+    
+    - Last activity log (what the agent did last time)
+    - Files it tried to write
+    - Commands it ran (which succeeded, which failed)
+    - Errors encountered
+    
+    The diagnostic prompt includes:
+    
+    ```
+    ## Stuck Retry Diagnostic
+    
+    This is the second attempt at this unit. The first attempt completed but
+    did not produce the expected outcome. Here's what happened:
+    
+    ### Last Attempt Summary
+    
+    Tool calls completed: 23
+    Files written: src/parser.ts, tests/parser.test.ts
+    Commands run: npm test parser ❌
+    Errors: Type error in parser.ts line 47
+    
+    Fix the issue and complete the unit.
+    ```
+  </Step>
+
+  <Step title="Second failure">
+    If the retry also fails to complete, auto-mode **stops** with a detailed error:
+    
+    ```
+    ❌ Unit stuck: execute-task M001/S01/T02
+    
+    The agent attempted this unit twice but did not complete it.
+    
+    Expected: T02-SUMMARY.md with done: true
+    Actual: Task plan exists, summary missing
+    
+    Last activity:
+      23 tool calls
+      Files written: src/parser.ts, tests/parser.test.ts
+      Command failed: npm test parser
+      Error: Type error in parser.ts:47
+    
+    Auto-mode paused. Review the task plan and resume manually.
+    ```
+    
+    You can:
+    - Inspect the task plan and fix the issue
+    - Refine the must-haves to be more mechanical
+    - Run the task manually in step mode
+  </Step>
+</Steps>
+
+## Verification Best Practices
+
+### Write Mechanical Must-Haves
+
+❌ **Bad:**
+```yaml
+must_haves:
+  - Code is clean
+  - Everything works
+  - UI looks good
+```
+
+✅ **Good:**
+```yaml
+must_haves:
+  truths:
+    - TypeScript build passes
+    - All unit tests pass
+    - API returns 200 for valid requests
+    - Browser renders the modal when button is clicked
+  artifacts:
+    - src/api/routes.ts with all endpoints exported
+    - tests/api.test.ts with coverage ≥ 80%
+  key_links:
+    - app.ts imports and mounts routes from api/routes.ts
+```
+
+### Prefer Lower Rungs
+
+If you can verify with a static check, don't use behavioral testing. If you can verify with a command, don't ask for human review.
+
+**Hierarchy:**
+```
+Static check < Command execution < Behavioral test < Human review
+   (cheap)                                              (expensive)
+```
+
+### Use Tests as Truth
+
+When possible, write a test that embodies the must-have:
+
+```typescript
+// Must-have: "Parser preserves [x] completion status"
+test('parser preserves completion status', () => {
+  const input = '- [x] Phase 1\n- [ ] Phase 2';
+  const result = parseRoadmap(input);
+  expect(result.phases[0].done).toBe(true);
+  expect(result.phases[1].done).toBe(false);
+});
+```
+
+Then the must-have becomes: "Test passes" — a single command execution.
+
+### Avoid Subjective Criteria
+
+If "looks good" is a must-have, define "good":
+
+❌ **Subjective:**
+```yaml
+must_haves:
+  - UI looks good
+```
+
+✅ **Objective:**
+```yaml
+must_haves:
+  - Modal is centered on screen
+  - Modal has 24px padding
+  - Close button is in top-right corner
+  - Background overlay is rgba(0,0,0,0.5)
+```
+
+Now the agent can verify with browser automation:
+
+```typescript
+const modal = await page.$('.modal');
+const padding = await modal.evaluate(el => getComputedStyle(el).padding);
+assert(padding === '24px');
+```
+
+## Related Files
+
+- `README.md:275` — Verification ladder description
+- `migrate/transformer.ts:89` — Must-haves structure in GSD format
+
+## See Also
+
+<CardGroup cols={2}>
+  <Card title="Auto Mode" icon="robot" href="/usage/auto-mode">
+    Supervision and automatic advancement
+  </Card>
+  <Card title="Stuck Detection" icon="triangle-exclamation" href="/usage/auto-mode#supervision-and-timeouts">
+    What happens when verification fails
+  </Card>
+</CardGroup>

@@ -1,0 +1,360 @@
+---
+title: Milestones, Slices, and Tasks
+description: Understanding GSD's three-level work hierarchy and the "one context window" rule
+---
+
+## The Hierarchy
+
+GSD structures work into three levels:
+
+```
+Milestone  →  a shippable version (4-10 slices)
+  Slice    →  one demoable vertical capability (1-7 tasks)
+    Task   →  one context-window-sized unit of work
+```
+
+This isn't just organizational sugar — it's enforced by the state machine. Each level has clear completion criteria.
+
+## Milestones
+
+A **milestone** is a shippable version with a clear user-facing outcome.
+
+**Stored in:** `.gsd/milestones/M001-PAYMENT-INTEGRATIONS/`
+
+**Key files:**
+- `M001-CONTEXT.md` — User decisions from the discuss phase
+- `M001-RESEARCH.md` — Codebase and ecosystem research
+- `M001-ROADMAP.md` — Slice breakdown with dependencies
+- `M001-SUMMARY.md` — Final milestone summary (written when complete)
+
+**Example milestone:**
+
+```markdown
+# M001: Payment Integrations
+
+**Vision:** Users can pay via Stripe, PayPal, or crypto
+
+**Success Criteria:**
+- Users can complete checkout with any payment method
+- Failed payments are retried automatically
+- Dashboard shows payment status in real-time
+```
+
+### Milestone Dependencies
+
+Milestones can depend on other milestones. GSD won't start M002 until M001 is complete:
+
+```yaml
+---
+depends_on: [M001]
+---
+```
+
+This is declared in `M002-CONTEXT.md` frontmatter. The state machine checks completion before activating:
+
+```typescript
+const deps = parseContextDependsOn(contextContent);
+const depsUnmet = deps.some(dep => !completeMilestoneIds.has(dep));
+if (depsUnmet) {
+  registry.push({ id: mid, title, status: 'pending', dependsOn: deps });
+}
+```
+
+<Info>
+  From [`state.ts:189`](https://github.com/gsd-build/GSD-2/blob/main/src/resources/extensions/gsd/state.ts#L189) — milestone activation is blocked until all dependencies are complete.
+</Info>
+
+## Slices
+
+A **slice** is one demoable vertical capability. It should have a tangible user-facing outcome.
+
+**Stored in:** `.gsd/milestones/M001-PAYMENT-INTEGRATIONS/S01-stripe-integration/`
+
+**Key files:**
+- `S01-RESEARCH.md` — Slice-specific research (optional, skipped for S01 when milestone research exists)
+- `S01-PLAN.md` — Task decomposition with must-haves
+- `S01-SUMMARY.md` — What happened, files modified, verification result
+- `S01-UAT.md` — Human test script for manual verification
+- `T01-PLAN.md`, `T01-SUMMARY.md`, ... — Individual task artifacts
+
+**Example slice entry in roadmap:**
+
+```markdown
+- [x] **S01: Stripe integration** `risk:low` `depends:[]`
+  > After this: Users can complete checkout with credit card via Stripe
+```
+
+### Slice Dependencies
+
+Slices can depend on other slices within the same milestone:
+
+```markdown
+- [ ] **S03: Payment dashboard** `risk:medium` `depends:[S01,S02]`
+```
+
+The state machine won't activate S03 until S01 and S02 are complete:
+
+```typescript
+const doneSliceIds = new Set(activeRoadmap.slices.filter(s => s.done).map(s => s.id));
+for (const s of activeRoadmap.slices) {
+  if (s.done) continue;
+  if (s.depends.every(dep => doneSliceIds.has(dep))) {
+    activeSlice = { id: s.id, title: s.title };
+    break;
+  }
+}
+```
+
+<Info>
+  From [`state.ts:308`](https://github.com/gsd-build/GSD-2/blob/main/src/resources/extensions/gsd/state.ts#L308) — slice activation checks that all dependencies are marked `[x]` in the roadmap.
+</Info>
+
+### Slice Must-Haves
+
+Every slice plan includes **must-haves** — mechanically verifiable outcomes:
+
+```markdown
+## Must-Haves
+
+- [ ] `createPaymentIntent` function exists and accepts amount, currency
+- [ ] Stripe webhook handler processes `payment_intent.succeeded`
+- [ ] `npm test` passes for payment integration suite
+```
+
+These are **not** implementation details — they're verification criteria. The LLM checks them before marking the slice complete.
+
+## Tasks
+
+A **task** is one context-window-sized unit of work.
+
+<Warning>
+  **The iron rule:** a task must fit in one context window. If it can't, it's two tasks.
+</Warning>
+
+**Why this matters:**
+
+1. **Fresh context per task** — No accumulated garbage. LLM starts each task with 200k clean tokens.
+2. **Crash recovery** — If a task crashes, GSD synthesizes recovery from surviving session files.
+3. **Cost tracking** — Every task's token usage is captured separately.
+4. **Stuck detection** — If a task dispatches 3+ times without producing its expected artifact, auto-mode stops with diagnostics.
+
+### Task Structure
+
+**Stored in:** `.gsd/milestones/M001/S01/T01-PLAN.md` and `T01-SUMMARY.md`
+
+**Example task plan:**
+
+```markdown
+# T01: Core Types and Interfaces
+
+**Goal:** Define TypeScript types for payment intents, webhooks, and responses.
+
+**Estimate:** 15 minutes
+
+## Must-Haves
+
+- [ ] `types/payment.ts` exports `PaymentIntent`, `WebhookEvent`
+- [ ] Types use Stripe SDK types where possible (no duplication)
+- [ ] `npm run typecheck` passes
+
+## Files Likely Touched
+
+- `src/types/payment.ts` (new)
+- `src/lib/stripe.ts` (import types)
+```
+
+### Task Summaries
+
+When a task completes, the LLM writes `T01-SUMMARY.md` with YAML frontmatter:
+
+```yaml
+---
+id: T01
+parent: S01
+milestone: M001
+provides: [PaymentIntent type, WebhookEvent type]
+requires: []
+affects: []
+key_files: [src/types/payment.ts]
+key_decisions: [Used Stripe.PaymentIntent instead of custom type]
+duration: 12m
+verification_result: passed
+completed_at: 2026-03-13T14:23:00Z
+blocker_discovered: false
+---
+
+# T01: Core Types and Interfaces
+
+**Created TypeScript types for payment flows with full Stripe SDK integration.**
+
+## What Happened
+
+Created `src/types/payment.ts` with `PaymentIntent` and `WebhookEvent` interfaces...
+```
+
+This frontmatter is used by the state machine and later tasks to understand dependencies.
+
+## The "One Context Window" Rule
+
+GSD enforces this through dispatch logic:
+
+```typescript
+export async function handleAgentEnd(
+  ctx: ExtensionContext,
+  pi: ExtensionAPI,
+): Promise<void> {
+  if (!active || !cmdCtx) return;
+
+  // Unit completed — clear its timeout
+  clearUnitTimeout();
+
+  // Small delay to let files settle
+  await new Promise(r => setTimeout(r, 500));
+
+  // Auto-commit any dirty files
+  if (currentUnit) {
+    const commitMsg = autoCommitCurrentBranch(basePath, currentUnit.type, currentUnit.id);
+    if (commitMsg) {
+      ctx.ui.notify(`Auto-committed uncommitted changes.`, "info");
+    }
+  }
+
+  // Dispatch next unit in a FRESH session
+  await dispatchNextUnit(ctx, pi);
+}
+```
+
+<Info>
+  From [`auto.ts:488`](https://github.com/gsd-build/GSD-2/blob/main/src/resources/extensions/gsd/auto.ts#L488) — every `agent_end` event triggers a fresh session dispatch.
+</Info>
+
+### What Happens Per Task
+
+1. **Read disk state** — `deriveState(basePath)` determines next task
+2. **Create fresh session** — `ctx.newSession()` clears the context
+3. **Inject focused prompt** — Pre-inline task plan, prior summaries, dependencies
+4. **LLM executes** — Writes code, runs tests, commits
+5. **Write summary** — LLM documents what happened
+6. **Mark task complete** — Checkbox in `S01-PLAN.md` marked `[x]`
+7. **Next task** — Loop back to step 1
+
+Each task gets exactly one context window. No exceptions.
+
+## Verification
+
+Every task has must-haves — mechanically checkable outcomes. The verification ladder:
+
+1. **Static checks** — `npm run typecheck`, `npm run lint`
+2. **Command execution** — `npm test`, `npm run build`
+3. **Behavioral testing** — Run the app, verify output
+4. **Human review** — Only when the agent genuinely can't verify itself
+
+<Note>
+  The LLM **must** verify every must-have before marking the task complete. If it can't, it writes a summary explaining why and marks `verification_result: needs_human_review`.
+</Note>
+
+## State Machine Integration
+
+The state machine determines phase based on the hierarchy:
+
+```typescript
+if (!slicePlanContent) {
+  return {
+    activeMilestone,
+    activeSlice,
+    activeTask: null,
+    phase: 'planning',
+    nextAction: `Plan slice ${activeSlice.id} (${activeSlice.title}).`,
+  };
+}
+
+const slicePlan = parsePlan(slicePlanContent);
+const activeTaskEntry = slicePlan.tasks.find(t => !t.done);
+
+if (!activeTaskEntry) {
+  return {
+    activeMilestone,
+    activeSlice,
+    activeTask: null,
+    phase: 'summarizing',
+    nextAction: `All tasks done in ${activeSlice.id}. Write slice summary.`,
+  };
+}
+
+return {
+  activeMilestone,
+  activeSlice,
+  activeTask: { id: activeTaskEntry.id, title: activeTaskEntry.title },
+  phase: 'executing',
+  nextAction: `Execute ${activeTaskEntry.id}: ${activeTaskEntry.title}`,
+};
+```
+
+<Info>
+  From [`state.ts:334`](https://github.com/gsd-build/GSD-2/blob/main/src/resources/extensions/gsd/state.ts#L334) — phase derivation is purely functional, reading only from disk state.
+</Info>
+
+## Example: Full Flow
+
+```bash
+# User runs auto mode
+/gsd auto
+
+# State machine:
+# 1. deriveState → phase: 'pre-planning', no roadmap
+# 2. dispatch research-milestone
+# 3. LLM writes M001-RESEARCH.md
+# 4. deriveState → phase: 'pre-planning', has research
+# 5. dispatch plan-milestone
+# 6. LLM writes M001-ROADMAP.md with 4 slices
+# 7. deriveState → phase: 'planning', activeSlice: S01
+# 8. dispatch plan-slice
+# 9. LLM writes S01-PLAN.md with 3 tasks
+# 10. deriveState → phase: 'executing', activeTask: T01
+# 11. dispatch execute-task
+# 12. LLM writes code, tests, T01-SUMMARY.md, marks [x] in S01-PLAN.md
+# 13. deriveState → phase: 'executing', activeTask: T02
+# ... repeat for T02, T03
+# 14. deriveState → phase: 'summarizing', no active task
+# 15. dispatch complete-slice
+# 16. LLM writes S01-SUMMARY.md, S01-UAT.md, marks [x] in M001-ROADMAP.md
+# 17. git merge gsd/M001/S01 → main (squash)
+# 18. deriveState → phase: 'planning', activeSlice: S02
+# ... repeat until all slices done
+# 19. deriveState → phase: 'completing-milestone'
+# 20. dispatch complete-milestone
+# 21. LLM writes M001-SUMMARY.md
+# 22. deriveState → phase: 'complete'
+# 23. Auto mode stops
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Keep tasks atomic">
+    One task = one feature, one fix, one refactor. If it touches 10+ files or takes 30+ minutes, split it.
+  </Accordion>
+  
+  <Accordion title="Write clear must-haves">
+    Use concrete verification criteria: file paths, function names, command outputs. Avoid vague goals like "improve UX".
+  </Accordion>
+  
+  <Accordion title="Respect dependencies">
+    Mark slice dependencies in the roadmap. Don't start S03 if it needs S01's types.
+  </Accordion>
+  
+  <Accordion title="Let the state machine drive">
+    Don't manually edit checkboxes mid-task. Let the LLM mark them when it writes summaries.
+  </Accordion>
+</AccordionGroup>
+
+## Related Concepts
+
+<CardGroup cols={2}>
+  <Card title="State Machine" icon="diagram-project" href="/concepts/state-machine">
+    How phases flow through the hierarchy
+  </Card>
+  <Card title="Context Engineering" icon="brain" href="/concepts/context-engineering">
+    What gets inlined in each task's prompt
+  </Card>
+</CardGroup>

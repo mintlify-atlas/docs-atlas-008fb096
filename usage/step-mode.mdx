@@ -1,0 +1,265 @@
+---
+title: Step Mode
+description: Execute one unit of work at a time with full control over the workflow
+---
+
+Step mode is GSD's guided execution flow. It executes one unit of work at a time, pausing between each step with a wizard showing what completed and what's next. You stay in the loop while the same state machine as auto mode handles orchestration.
+
+## Overview
+
+Step mode provides:
+
+- **Wizard-based navigation** — contextual menu shows what's ready to do next
+- **One unit at a time** — research, plan slice, execute task, complete slice
+- **Pause between steps** — review output before continuing
+- **Easy escalation to auto** — switch to auto mode from any wizard screen
+- **Same state machine** — identical logic to auto mode, just paused for review
+
+<Note>
+Step mode is the on-ramp. Auto mode is the highway. Start with step mode to understand the workflow, then switch to auto when you're comfortable walking away.
+</Note>
+
+## Starting Step Mode
+
+Run `/gsd` or `/gsd next` from the interactive session:
+
+```bash
+gsd
+/gsd next
+```
+
+Both commands launch step mode. The wizard adapts to your project state:
+
+<Steps>
+  <Step title="No .gsd/ directory">
+    Start a new project. Discussion flow captures your vision, constraints, and preferences.
+  </Step>
+  <Step title="Milestone exists, no roadmap">
+    Wizard offers to discuss or research the milestone, then create the roadmap.
+  </Step>
+  <Step title="Roadmap exists, slices pending">
+    Wizard shows next unit: plan the next slice, execute one task, or switch to auto.
+  </Step>
+  <Step title="Mid-task">
+    Resume from where you left off with a "Resume T01" option.
+  </Step>
+</Steps>
+
+## The Wizard Flow
+
+The wizard reads `.gsd/STATE.md` and shows contextual options. Here's what you'll see at each stage:
+
+### New Project (No Milestone)
+
+```
+GSD — Get Shit Done
+
+No active milestone.
+
+→ Create next milestone
+  Define what to build next.
+```
+
+Selecting this starts the discussion flow. The agent asks about your goals, constraints, tech stack, and architectural preferences. It writes `M001-CONTEXT.md` when done.
+
+### Milestone Exists, No Roadmap
+
+```
+GSD — M001: API + Dashboard MVP
+
+Context captured. Ready to create roadmap.
+
+→ Create roadmap
+  Decompose into slices with a boundary map.
+
+  Discuss first
+  Capture decisions on gray areas before planning.
+```
+
+The roadmap decomposes the milestone into 4-10 slices with dependencies, risk levels, and outcomes.
+
+### Ready to Execute Slice
+
+```
+GSD — M001 / S01: Data model and types
+
+Next: T01 — Core types and interfaces
+
+→ Execute T01
+  Start working on "Core types and interfaces".
+
+  Go auto
+  Execute this and all remaining tasks automatically.
+
+  View status
+  See slice progress before starting.
+```
+
+Selecting "Execute T01" runs that task in the current session. The agent reads the task plan, implements it, verifies the must-haves, and writes `T01-SUMMARY.md`.
+
+### Mid-Task Resume
+
+If you pressed Escape during a task or the session crashed:
+
+```
+GSD — M001 / S01: Data model and types
+
+Resuming: T01 — Core types and interfaces
+
+→ Resume T01
+  Continue from where you left off.
+
+  Go auto
+  Execute this and all remaining tasks automatically.
+```
+
+The resume prompt includes the `CONTINUE.md` notes written before the interruption.
+
+### All Tasks Done
+
+```
+GSD — M001 / S01: Data model and types
+
+All tasks complete. Ready for slice summary.
+
+→ Complete S01
+  Write slice summary, UAT, mark done, and squash-merge to main.
+
+  View status
+  Review tasks before completing.
+```
+
+Completing the slice writes `S01-SUMMARY.md`, `S01-UAT.md`, marks the slice `[x]` in the roadmap, squash-merges the branch to main, and triggers roadmap reassessment.
+
+## Switching to Auto Mode
+
+Every wizard screen with an active roadmap includes a "Go auto" option:
+
+```
+  Go auto
+  Execute this and all remaining tasks automatically.
+```
+
+Selecting this hands off to auto mode. The state machine reads disk state and continues from the current unit without re-executing completed work.
+
+<Tip>
+Use step mode to execute the first slice of a milestone, verify the output, then switch to auto for the remaining slices.
+</Tip>
+
+## How It Works
+
+Step mode is implemented in `guided-flow.ts`. The `showSmartEntry()` function:
+
+1. Reads `.gsd/STATE.md` to determine current phase
+2. Shows a contextual wizard menu via `showNextAction()`
+3. Dispatches the selected action through `GSD-WORKFLOW.md`
+4. Waits for the agent to complete the unit
+5. Returns to the wizard when the agent finishes
+
+Each wizard option maps to a prompt template:
+
+| Wizard Option | Prompt Template | What It Does |
+|---------------|----------------|-------------|
+| Create roadmap | `guided-plan-milestone` | Decompose milestone into slices |
+| Plan S01 | `guided-plan-slice` | Break slice into tasks with must-haves |
+| Execute T01 | `guided-execute-task` | Implement and verify one task |
+| Resume T01 | `guided-resume-task` | Continue interrupted task |
+| Complete S01 | `guided-complete-slice` | Write summary, UAT, mark done, merge |
+| Discuss | `guided-discuss-milestone` | Conversational intake for context |
+| Research | `guided-research-slice` | Scout codebase and docs |
+
+## State Persistence
+
+All progress is saved to disk in `.gsd/`:
+
+- `STATE.md` — current phase, active milestone/slice/task
+- `M001-ROADMAP.md` — slice checkboxes track completion
+- `S01-PLAN.md` — task checkboxes track execution
+- `T01-SUMMARY.md` — durable record of what was done
+
+If you close the terminal and restart, `/gsd` picks up exactly where you left off.
+
+## Git Strategy in Step Mode
+
+Step mode uses the same branch-per-slice strategy as auto mode:
+
+```bash
+# Starting a new slice creates a branch
+git checkout -b gsd/M001/S01
+
+# Each task commits atomically
+git commit -m "feat(S01/T01): core types and interfaces"
+git commit -m "feat(S01/T02): parser implementation"
+
+# Completing the slice squash-merges to main
+git checkout main
+git merge --squash gsd/M001/S01
+git commit -m "feat(M001/S01): data model and types"
+git branch -D gsd/M001/S01
+```
+
+This gives you clean git history with one commit per slice on `main`, while preserving atomic commits on the slice branch during development.
+
+## When to Use Step Mode
+
+Step mode is ideal when:
+
+- **Learning GSD** — understand the workflow by seeing each phase
+- **Complex decisions** — architectural choices need human input between steps
+- **Quality gates** — verify output before continuing to the next unit
+- **Debugging plans** — check task decomposition before executing
+- **Partial automation** — execute one slice manually, then auto the rest
+
+For full autonomous execution, use [auto mode](/usage/auto-mode).
+
+## Commands
+
+| Command | What It Does |
+|---------|-------------|
+| `/gsd` | Launch step mode wizard |
+| `/gsd next` | Explicit step mode (same as `/gsd`) |
+| `/gsd status` | View progress dashboard |
+| `/gsd discuss` | Discuss architecture (works alongside step mode) |
+| `/gsd auto` | Switch to autonomous mode |
+
+## Example Session
+
+Here's a full step-mode workflow from scratch:
+
+```bash
+$ gsd
+> /gsd
+
+# Wizard: "No active milestone"
+# Choose: "Create next milestone"
+# Agent: "What do you want to build?"
+> A REST API for a todo app with SQLite
+
+# Agent writes M001-CONTEXT.md
+# Wizard: "Context captured. Ready to create roadmap."
+# Choose: "Create roadmap"
+
+# Agent writes M001-ROADMAP.md with 3 slices
+# Wizard: "Next: S01 — Database schema"
+# Choose: "Plan S01"
+
+# Agent writes S01-PLAN.md with 2 tasks
+# Wizard: "Next: T01 — Schema definition"
+# Choose: "Execute T01"
+
+# Agent implements schema, writes T01-SUMMARY.md
+# Wizard: "Next: T02 — Migration script"
+# Choose: "Go auto"
+
+# Auto mode takes over, executes T02, completes S01,
+# reassesses roadmap, plans S02, executes all tasks,
+# completes S02, S03, and milestone.
+```
+
+Step mode got you started safely, then auto mode finished the work.
+
+## Related
+
+- [Auto Mode](/usage/auto-mode) — walk away, come back to built software
+- [Two Terminal Workflow](/usage/two-terminal-workflow) — steer while auto mode runs
+- [Commands Reference](/commands/gsd) — all `/gsd` commands

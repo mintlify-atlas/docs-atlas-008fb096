@@ -1,0 +1,243 @@
+---
+title: Introduction
+description: GSD 2 is an autonomous coding agent CLI that builds software while you walk away
+---
+
+## What is GSD 2?
+
+GSD 2 is **the evolution of [Get Shit Done](https://github.com/gsd-build/get-shit-done)** — now a real coding agent. The original GSD went viral as a prompt framework for Claude Code. It worked, but it was fighting the tool — injecting prompts through slash commands, hoping the LLM would follow instructions, with no actual control over context windows, sessions, or execution.
+
+This version is different. GSD is now a **standalone CLI** built on the [Pi SDK](https://github.com/badlogic/pi-mono), which gives it direct TypeScript access to the agent harness itself.
+
+<Card title="One Command. Walk Away." icon="rocket">
+  Run `/gsd auto` and come back to a built project with clean git history.
+</Card>
+
+## The Core Difference
+
+GSD can actually *do* what v1 could only *ask* the LLM to do:
+
+- **Clear context between tasks** — Fresh 200k-token window per unit of work
+- **Inject exactly the right files** at dispatch time
+- **Manage git branches** programmatically (branch-per-slice, squash merge)
+- **Track cost and tokens** with per-phase, per-model breakdowns
+- **Detect stuck loops** and retry with diagnostics
+- **Recover from crashes** using lock files and session forensics
+- **Auto-advance through entire milestones** without human intervention
+
+## How GSD Structures Work
+
+GSD organizes work into a three-level hierarchy:
+
+<Steps>
+  <Step title="Milestone">
+    A shippable version containing 4-10 slices
+  </Step>
+  
+  <Step title="Slice">
+    One demoable vertical capability with 1-7 tasks
+  </Step>
+  
+  <Step title="Task">
+    One context-window-sized unit of work (must fit in one session)
+  </Step>
+</Steps>
+
+<Note>
+  **The iron rule:** A task must fit in one context window. If it can't, it's two tasks.
+</Note>
+
+## The Autonomous Loop
+
+Each slice flows through phases automatically:
+
+```mermaid
+graph LR
+    A[Research] --> B[Plan]
+    B --> C[Execute Tasks]
+    C --> D[Complete]
+    D --> E[Reassess Roadmap]
+    E --> F[Next Slice]
+```
+
+**Research** scouts the codebase and relevant docs. **Plan** decomposes the slice into tasks with must-haves (mechanically verifiable outcomes). **Execute** runs each task in a fresh context window with only the relevant files pre-loaded. **Complete** writes the summary, UAT script, marks the roadmap, and commits. **Reassess** checks if the roadmap still makes sense given what was learned.
+
+## What Makes Auto Mode Different
+
+`/gsd auto` is what separates GSD from traditional coding assistants:
+
+<CardGroup cols={2}>
+  <Card title="Fresh Sessions" icon="rotate">
+    Every task gets a clean 200k-token context window. No accumulated garbage.
+  </Card>
+  
+  <Card title="Context Pre-loading" icon="file-import">
+    Dispatch prompts include inlined task plans, summaries, and decisions. No wasted tool calls.
+  </Card>
+  
+  <Card title="Git Automation" icon="code-branch">
+    Each slice gets its own branch (`gsd/M001/S01`). Squash-merged as one clean commit.
+  </Card>
+  
+  <Card title="Crash Recovery" icon="heart-pulse">
+    Lock files track progress. Session dies? Resume with full context from disk.
+  </Card>
+  
+  <Card title="Stuck Detection" icon="triangle-exclamation">
+    Same unit dispatches twice? Retry with diagnostics. Fails again? Stop with details.
+  </Card>
+  
+  <Card title="Timeout Supervision" icon="clock">
+    Soft timeout warns. Idle watchdog detects stalls. Hard timeout pauses safely.
+  </Card>
+  
+  <Card title="Cost Tracking" icon="dollar-sign">
+    Per-unit token/cost ledger with projections. Budget ceilings prevent overspending.
+  </Card>
+  
+  <Card title="Adaptive Replanning" icon="compass">
+    After each slice, roadmap is reassessed. Slices reordered, added, or removed.
+  </Card>
+</CardGroup>
+
+## Two Modes of Operation
+
+### Step Mode (`/gsd` or `/gsd next`)
+
+Executes one unit of work at a time, pausing between each with a wizard showing what completed and what's next. You advance when ready. Perfect for:
+
+- Starting a new project
+- Reviewing work as it progresses
+- Staying in the loop during critical phases
+
+### Auto Mode (`/gsd auto`)
+
+Autonomous execution from research through completion. Walk away, come back to built software. Perfect for:
+
+- Long-running implementation work
+- Overnight builds
+- Parallel development (run auto in one terminal, steer from another)
+
+<Tip>
+  **The Real Workflow:** Run auto mode in one terminal, steer from another. Both read/write the same `.gsd/` files on disk. Your decisions are picked up at the next phase boundary.
+</Tip>
+
+## What GSD Manages For You
+
+### File Artifacts
+
+All work lives in `.gsd/` at your project root:
+
+- `STATE.md` — Quick-glance dashboard (always read first)
+- `PROJECT.md` — Living doc of what the project is right now
+- `DECISIONS.md` — Append-only architectural decisions register
+- `M001-ROADMAP.md` — Milestone plan with checkboxes, risk levels, dependencies
+- `M001-CONTEXT.md` — User decisions from discuss phase
+- `M001-RESEARCH.md` — Codebase and ecosystem research
+- `S01-PLAN.md` — Slice task decomposition with must-haves
+- `T01-PLAN.md` / `T01-SUMMARY.md` — Individual task plans and outcomes
+- `S01-UAT.md` — Human test script for slice verification
+
+### Git Strategy
+
+Branch-per-slice with squash merge. Fully automated:
+
+```bash
+main:
+  docs(M001/S04): workflow documentation and examples
+  fix(M001/S03): bug fixes and doc corrections
+  feat(M001/S02): API endpoints and middleware
+  feat(M001/S01): data model and type system
+
+gsd/M001/S01 (deleted after merge):
+  feat(S01/T03): file writer with round-trip fidelity
+  feat(S01/T02): markdown parser for plan files
+  feat(S01/T01): core types and interfaces
+```
+
+One commit per slice on main. Individual slices are revertable. Git bisect works.
+
+### Verification
+
+Every task has **must-haves** — mechanically checkable outcomes:
+
+- **Truths** — Observable behaviors ("User can sign up with email")
+- **Artifacts** — Files that must exist with real implementation
+- **Key Links** — Imports and wiring between artifacts
+
+The verification ladder: static checks → command execution → behavioral testing → human review (only when the agent genuinely can't verify itself).
+
+## Requirements
+
+<CardGroup cols={2}>
+  <Card title="Node.js" icon="node-js">
+    Version ≥ 20.6.0 (22+ recommended)
+  </Card>
+  
+  <Card title="LLM Provider" icon="brain">
+    Any of 20+ supported providers (Anthropic, OpenAI, Google, OpenRouter, GitHub Copilot, etc.)
+  </Card>
+  
+  <Card title="Git" icon="git-alt">
+    Initialized automatically if missing
+  </Card>
+  
+  <Card title="API Keys (Optional)" icon="key">
+    Brave Search, Context7, Jina for enhanced research capabilities
+  </Card>
+</CardGroup>
+
+## Use Any Model
+
+GSD isn't locked to one provider. It runs on the [Pi SDK](https://github.com/badlogic/pi-mono), which supports **20+ model providers** out of the box:
+
+- **Anthropic** (Claude Opus, Sonnet)
+- **OpenAI** (GPT-4, o1)
+- **Google** (Gemini)
+- **OpenRouter** (hundreds of models)
+- **GitHub Copilot**
+- **Amazon Bedrock**, **Azure OpenAI**, **Google Vertex**
+- And more...
+
+<Note>
+  **OAuth Support:** If you have Claude Max, Codex, or GitHub Copilot subscriptions, GSD handles the OAuth flow. No API key needed.
+</Note>
+
+### Per-Phase Model Selection
+
+Use expensive models where quality matters, cheaper models where speed matters:
+
+```yaml
+models:
+  research: openrouter/deepseek/deepseek-r1
+  planning: claude-opus-4-6
+  execution: claude-sonnet-4-6
+  completion: claude-sonnet-4-6
+```
+
+GSD tracks cost per-model so you can see exactly where your budget goes.
+
+## What Changed From v1
+
+| Feature | v1 (Prompt Framework) | v2 (Agent Application) |
+|---------|----------------------|------------------------|
+| Runtime | Claude Code slash commands | Standalone CLI via Pi SDK |
+| Context management | Hope the LLM doesn't fill up | Fresh session per task, programmatic |
+| Auto mode | LLM self-loop | State machine reading `.gsd/` files |
+| Crash recovery | None | Lock files + session forensics |
+| Git strategy | LLM writes git commands | Programmatic branch-per-slice |
+| Cost tracking | None | Per-unit token/cost ledger |
+| Stuck detection | None | Retry once with diagnostics |
+| Timeout supervision | None | Soft/idle/hard timeouts |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Install GSD" icon="download" href="/installation">
+    Get GSD installed and configured on your system
+  </Card>
+  
+  <Card title="Quick Start Guide" icon="rocket" href="/quickstart">
+    Run your first project with GSD in minutes
+  </Card>
+</CardGroup>

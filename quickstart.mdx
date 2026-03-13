@@ -1,80 +1,596 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quick Start
+description: Get your first project running with GSD in 5 minutes
 ---
 
-## Get started in three steps
+## Prerequisites
 
-Get your documentation site running locally and make your first customization.
+Before starting, make sure you have:
 
-### Step 1: Set up your local environment
+- [Installed GSD](/installation) globally via npm
+- Completed the first-launch setup wizard
+- Configured at least one LLM provider
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
+<Check>
+  Verify installation: `gsd --version` should show `2.5.1` or higher
+</Check>
+
+## Your First GSD Session
+
+<Steps>
+  <Step title="Navigate to Your Project">
+    Open a terminal and navigate to your project directory:
     
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
+    ```bash
+    cd ~/projects/my-app
+    ```
     
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
+    <Note>
+      Don't have a project? Create a new directory:
+      ```bash
+      mkdir my-app && cd my-app
+      ```
+    </Note>
+  </Step>
+  
+  <Step title="Start GSD">
+    Launch the interactive agent session:
     
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+    ```bash
+    gsd
+    ```
+    
+    GSD opens an interactive session with a branded welcome screen.
+  </Step>
+  
+  <Step title="Start Your First Project">
+    If you're in a fresh directory with no `.gsd/` folder, GSD enters the **discussion flow**:
+    
+    Type `/gsd` and press Enter.
+    
+    GSD will ask you about your project:
+    - What are you building?
+    - What constraints exist?
+    - What's the first milestone?
+    
+    Answer naturally — GSD will create a project structure from the conversation.
+  </Step>
+  
+  <Step title="Let GSD Build">
+    Once the project is defined, choose your mode:
+    
+    **Step Mode** (recommended for first project):
+    ```bash
+    /gsd next
+    ```
+    
+    GSD executes one unit of work, then shows a wizard:
+    - What just completed
+    - What's next
+    - Option to continue or switch to auto
+    
+    **Auto Mode** (hands-free):
+    ```bash
+    /gsd auto
+    ```
+    
+    GSD researches, plans, executes, and commits until the milestone is complete. Walk away.
+  </Step>
+</Steps>
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+## Understanding the Two Modes
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+### Step Mode: `/gsd` or `/gsd next`
 
-### Step 3: Go live
+**When to use:** Starting a new project, learning GSD, or staying in control during critical work.
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
-
-## Next steps
-
-Now that you have your docs running, explore these key features:
+```bash
+gsd
+/gsd next
+```
 
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Pauses Between Units" icon="pause">
+    Wizard shows progress after each task/phase
+  </Card>
+  
+  <Card title="You Control Advancement" icon="hand">
+    Press Enter to continue, or inspect work first
+  </Card>
+  
+  <Card title="Same State Machine" icon="diagram-project">
+    Uses the same auto engine, just paused
+  </Card>
+  
+  <Card title="Switch Anytime" icon="arrows-turn-to-dots">
+    Wizard offers option to switch to auto
+  </Card>
 </CardGroup>
 
+**What step mode does:**
+
+1. Reads `.gsd/STATE.md` to determine next action
+2. Executes one unit (research, plan, task, etc.)
+3. Shows wizard with completion status
+4. Waits for your input to continue
+
+### Auto Mode: `/gsd auto`
+
+**When to use:** Long-running work, overnight builds, parallel development.
+
+```bash
+gsd
+/gsd auto
+```
+
+<CardGroup cols={2}>
+  <Card title="Fully Autonomous" icon="robot">
+    Runs until milestone complete or error
+  </Card>
+  
+  <Card title="Fresh Context Per Task" icon="rotate">
+    New 200k-token window for every task
+  </Card>
+  
+  <Card title="Crash Recovery" icon="heart-pulse">
+    Resumes from lock files if interrupted
+  </Card>
+  
+  <Card title="Cost Tracking" icon="dollar-sign">
+    Monitors budget, pauses if ceiling hit
+  </Card>
+</CardGroup>
+
+**What auto mode does:**
+
+1. **Research** — Scouts codebase and docs
+2. **Plan** — Decomposes slice into tasks with must-haves
+3. **Execute** — Runs each task in fresh context
+4. **Complete** — Writes summary, UAT, commits to git
+5. **Reassess** — Updates roadmap based on learnings
+6. **Repeat** — Advances to next slice automatically
+
+<Tip>
+  **Pro Tip:** Press `Escape` to pause auto mode gracefully. Inspect work, then `/gsd auto` to resume.
+</Tip>
+
+## Essential Commands
+
+Once inside the `gsd` interactive session, use these commands:
+
+### Core Workflow
+
+<CodeGroup>
+
+```bash Step Mode
+/gsd
+# or
+/gsd next
+# Execute one unit at a time with wizard pauses
+```
+
+```bash Auto Mode
+/gsd auto
+# Run autonomously until milestone complete
+```
+
+```bash Stop Auto
+/gsd stop
+# Gracefully stop auto mode (finishes current unit)
+```
+
+```bash Status Dashboard
+/gsd status
+# or press Ctrl+Alt+G
+# Show progress, costs, and current state
+```
+
+</CodeGroup>
+
+### Planning & Steering
+
+<CodeGroup>
+
+```bash Discuss Architecture
+/gsd discuss
+# Talk through decisions while auto runs
+# Safe to use in parallel with /gsd auto
+```
+
+```bash Queue Milestones
+/gsd queue
+# Add future milestones to the roadmap
+# Safe during auto mode
+```
+
+```bash View Progress
+/gsd status
+# Dashboard overlay with:
+# - Milestone/slice/task progress
+# - Cost breakdown by phase and model
+# - Time elapsed in auto mode
+# - Completion estimates
+```
+
+</CodeGroup>
+
+### Configuration
+
+<CodeGroup>
+
+```bash Preferences
+/gsd prefs
+# Edit global or project-specific settings:
+# - Model selection per phase
+# - Timeout thresholds
+# - Budget ceilings
+# - Skill discovery rules
+```
+
+```bash Model Selection
+/model
+# or press Ctrl+P
+# Cycle through available models
+```
+
+```bash Change Provider
+gsd config
+# (run outside gsd session)
+# Re-run setup wizard to change provider or add API keys
+```
+
+</CodeGroup>
+
+### Maintenance
+
+<CodeGroup>
+
+```bash Health Check
+/gsd doctor
+# Validate .gsd/ file integrity
+# Reports missing artifacts, broken references
+```
+
+```bash Migrate from v1
+/gsd migrate
+# Convert old .planning/ directories to .gsd/
+# Preserves completion state and summaries
+```
+
+</CodeGroup>
+
+### Session Control
+
+<CodeGroup>
+
+```bash New Session
+/clear
+# or /new
+# Start fresh session (clears context, preserves .gsd/ files)
+```
+
+```bash Exit GSD
+/exit
+# Kill GSD process immediately
+```
+
+```bash Voice Input (macOS)
+/voice
+# or press Ctrl+Alt+V
+# Toggle real-time speech-to-text
+```
+
+</CodeGroup>
+
+## The Two-Terminal Workflow
+
+The most powerful way to use GSD: **auto mode in one terminal, steering in another**.
+
+### Terminal 1: Let It Build
+
+```bash
+cd ~/projects/my-app
+gsd
+/gsd auto
+```
+
+GSD runs autonomously:
+- Researches the codebase
+- Plans slices into tasks
+- Executes each task
+- Commits to git
+- Advances to next slice
+
+### Terminal 2: Steer While It Works
+
+```bash
+cd ~/projects/my-app
+gsd
+```
+
+While auto runs in Terminal 1:
+
+```bash
+/gsd discuss
+# Talk through architectural decisions
+# GSD writes to .gsd/milestones/M001/context.md
+
+/gsd queue
+# Add future milestones
+
+/gsd status
+# Check progress and costs
+```
+
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+  **Both terminals read/write the same `.gsd/` files.** Your decisions in Terminal 2 are picked up automatically at the next phase boundary in Terminal 1. No need to stop auto mode.
 </Note>
+
+## What Happens During Auto Mode?
+
+Here's what you'll see when `/gsd auto` runs:
+
+<Steps>
+  <Step title="State Detection">
+    GSD reads `.gsd/STATE.md` to determine the next action:
+    - No roadmap? → Start research phase
+    - Roadmap exists, slice unchecked? → Plan the slice
+    - Tasks defined? → Execute next task
+    - All tasks done? → Complete and commit
+  </Step>
+  
+  <Step title="Phase Execution">
+    GSD creates a fresh agent session with:
+    - Clean 200k-token context window
+    - Pre-loaded task plans, summaries, decisions
+    - Relevant files inlined into prompt
+    
+    The LLM executes the task and writes artifacts to `.gsd/`.
+  </Step>
+  
+  <Step title="Verification">
+    GSD checks must-haves:
+    - **Truths:** Observable behaviors
+    - **Artifacts:** Files exist with real implementation
+    - **Key Links:** Imports and wiring between files
+    
+    If verification fails, retry with diagnostics.
+  </Step>
+  
+  <Step title="Git Commit">
+    On task completion:
+    ```bash
+    gsd/M001/S01 (branch created)
+    ├─ feat(S01/T01): core types and interfaces
+    ├─ feat(S01/T02): markdown parser for plan files
+    └─ feat(S01/T03): file writer with round-trip fidelity
+    
+    main (squash-merged)
+    └─ feat(M001/S01): data model and type system
+    ```
+  </Step>
+  
+  <Step title="Reassessment">
+    After slice completion:
+    - GSD reads learnings from task summaries
+    - Updates roadmap if priorities changed
+    - Reorders, adds, or removes slices
+    - Advances to next slice
+  </Step>
+</Steps>
+
+## Understanding the Dashboard
+
+Press `Ctrl+Alt+G` or run `/gsd status` to open the dashboard overlay:
+
+```
+╔══════════════════════════════════════════════════════════╗
+║  GSD Status — M001: Core Features                       ║
+╠══════════════════════════════════════════════════════════╣
+║  Progress:  [████████░░░░░░] S02/T03 (8 of 15 tasks)    ║
+║  Auto Mode: Running (12m 34s elapsed)                    ║
+║  Phase:     Execute Task                                 ║
+║                                                          ║
+║  Completed:                                              ║
+║    ✓ S01: Data Model (3 tasks, $2.40)                   ║
+║    ✓ S02/T01: API router setup ($0.80)                  ║
+║    ✓ S02/T02: Auth middleware ($1.20)                   ║
+║    → S02/T03: User endpoints (in progress)              ║
+║                                                          ║
+║  Cost Breakdown:                                         ║
+║    Research:   $1.20  (claude-sonnet-4-6)               ║
+║    Planning:   $3.50  (claude-opus-4-6)                 ║
+║    Execution:  $8.30  (claude-sonnet-4-6)               ║
+║    Total:      $13.00 / $50.00 budget                   ║
+║                                                          ║
+║  Projection: ~$45 to complete milestone                  ║
+╚══════════════════════════════════════════════════════════╝
+```
+
+## File Structure: What GSD Creates
+
+When GSD starts working on your project, it creates a `.gsd/` directory:
+
+```bash
+.gsd/
+├── state.md                    # Dashboard — always read first
+├── decisions.md                # Architectural decisions register
+└── milestones/
+    └── M001/
+        ├── roadmap.md          # Slice checkboxes ([ ] = todo, [x] = done)
+        ├── context.md          # User decisions from /gsd discuss
+        ├── research.md         # Codebase and ecosystem research
+        ├── summary.md          # Milestone rollup (updated as slices complete)
+        └── slices/
+            ├── S01/
+            │   ├── plan.md     # Task decomposition with must-haves
+            │   ├── summary.md  # What happened when slice completed
+            │   ├── uat.md      # Human test script
+            │   └── tasks/
+            │       ├── T01-plan.md
+            │       ├── T01-summary.md
+            │       ├── T02-plan.md
+            │       └── T02-summary.md
+            └── S02/
+                └── ...
+```
+
+<Warning>
+  **Commit `.gsd/` to git!** These files are the source of truth. They survive across sessions and enable crash recovery.
+</Warning>
+
+## Common First-Project Scenarios
+
+### Scenario 1: Starting from Scratch
+
+```bash
+mkdir my-app && cd my-app
+gsd
+/gsd
+```
+
+**What happens:**
+1. GSD detects no `.gsd/` directory
+2. Enters **discussion flow**
+3. Asks about your vision, constraints, first milestone
+4. Creates initial project structure in `.gsd/`
+5. Offers to start research or planning
+
+### Scenario 2: Adding GSD to Existing Project
+
+```bash
+cd ~/projects/existing-app
+gsd
+/gsd
+```
+
+**What happens:**
+1. GSD scans existing codebase
+2. Asks what you want to build/improve
+3. Generates roadmap that extends current code
+4. Starts research phase to understand architecture
+
+### Scenario 3: Resuming After Interruption
+
+```bash
+cd ~/projects/my-app
+gsd
+/gsd auto
+```
+
+**What happens:**
+1. GSD reads `.gsd/STATE.md`
+2. Detects last completed unit (e.g., S02/T01)
+3. Checks for crash recovery breadcrumbs
+4. Resumes from next unit with full context
+
+<Tip>
+  If auto mode was interrupted, GSD synthesizes a recovery briefing from the last session's tool calls saved to disk.
+</Tip>
+
+## Escape Hatch: Pausing Auto Mode
+
+If auto mode is running and you need to intervene:
+
+<Steps>
+  <Step title="Press Escape">
+    In the terminal running `/gsd auto`, press `Escape`.
+    
+    Auto mode pauses gracefully after finishing the current unit.
+  </Step>
+  
+  <Step title="Inspect or Interact">
+    The conversation is preserved. You can:
+    - Review what just completed
+    - Ask questions about the code
+    - Manually edit `.gsd/` files
+    - Run `/gsd status` to check progress
+  </Step>
+  
+  <Step title="Resume">
+    When ready to continue:
+    ```bash
+    /gsd auto
+    ```
+    
+    GSD reads disk state and resumes from where it paused.
+  </Step>
+</Steps>
+
+## Troubleshooting Common Issues
+
+### "No GSD milestones found"
+
+**Cause:** You're in a directory without a `.gsd/` folder.
+
+**Solution:**
+```bash
+/gsd
+# Start the discussion flow to create initial structure
+```
+
+### "Auto mode stuck on same task"
+
+**Cause:** Task verification failed twice (stuck detection).
+
+**What GSD does:**
+1. First failure → retry with deep diagnostic
+2. Second failure → stop with details about expected artifact
+
+**Solution:**
+- Run `/gsd doctor` to check file integrity
+- Manually review the task plan in `.gsd/milestones/M001/slices/S0X/tasks/T0X-plan.md`
+- Fix any blocking issues in code
+- Run `/gsd auto` to retry
+
+### "Budget ceiling reached"
+
+**Cause:** Cost exceeded the budget limit in preferences.
+
+**Solution:**
+```bash
+/gsd prefs
+# Edit budget_ceiling value
+budget_ceiling: 100.00  # Increase as needed
+```
+
+Then resume:
+```bash
+/gsd auto
+```
+
+### "Context window full"
+
+**Cause:** Task is too large for one context window.
+
+**Solution:**
+GSD should automatically detect this and split the task. If not:
+
+1. Open the task plan: `.gsd/milestones/M001/slices/S0X/tasks/T0X-plan.md`
+2. Manually split into two smaller tasks
+3. Update the slice plan: `.gsd/milestones/M001/slices/S0X/plan.md`
+4. Run `/gsd auto` to continue
+
+<Note>
+  **The iron rule:** A task must fit in one context window (200k tokens). If it doesn't, it's two tasks.
+</Note>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/configuration">
+    Learn about preferences, timeouts, and budget controls
+  </Card>
+  
+  <Card title="Commands Reference" icon="terminal" href="/commands">
+    Complete list of all GSD commands and options
+  </Card>
+  
+  <Card title="Architecture" icon="diagram-project" href="/architecture">
+    Understand how GSD works under the hood
+  </Card>
+  
+  <Card title="Verification" icon="check" href="/advanced/verification">
+    How GSD validates completed work
+  </Card>
+</CardGroup>

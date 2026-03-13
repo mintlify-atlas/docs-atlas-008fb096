@@ -1,0 +1,384 @@
+---
+title: "Specialized Agents"
+description: "Scout, Researcher, and Worker — three subagents for delegated work"
+icon: "robot"
+---
+
+GSD 2 includes three specialized subagents for delegated work. Each operates in an isolated context window and returns structured output for handoff.
+
+## Why Subagents?
+
+Subagents solve the context pollution problem:
+
+- **Isolated context** — Each subagent gets a fresh 200k-token window
+- **Focused expertise** — Specialized prompts for specific task types
+- **Structured output** — Results formatted for easy integration
+- **Parallel execution** — Run multiple subagents concurrently
+- **Cost efficiency** — Use cheaper models for simple tasks
+
+<Tip>
+Subagents are invoked via the `subagent` tool from the Subagent extension.
+</Tip>
+
+---
+
+## Scout — Fast Codebase Recon
+
+**Role:** Quickly investigate a codebase and return compressed context for handoff.
+
+### When to Use Scout
+
+- You need to understand how a feature is implemented without reading dozens of files
+- You want to locate relevant code for a task before starting execution
+- You need to trace dependencies between modules
+- You want a summary of how types/interfaces connect
+
+### How Scout Works
+
+**Tools available:** `read`, `grep`, `find`, `ls`, `bash`
+
+**Strategy:**
+1. `grep`/`find` to locate relevant code
+2. Read key sections (not entire files)
+3. Identify types, interfaces, key functions
+4. Note dependencies between files
+
+**Thoroughness levels:**
+- **Quick** — Targeted lookups, key files only
+- **Medium** (default) — Follow imports, read critical sections
+- **Thorough** — Trace all dependencies, check tests/types
+
+### Output Format
+
+```markdown
+## Files Retrieved
+
+1. `path/to/file.ts` (lines 10-50) - Description of what's here
+2. `path/to/other.ts` (lines 100-150) - Description
+
+## Key Code
+
+```typescript
+interface Example {
+  // actual code from the files
+}
+
+function keyFunction() {
+  // actual implementation
+}
+```
+
+## Architecture
+
+Brief explanation of how the pieces connect.
+
+## Start Here
+
+Which file to look at first and why.
+```
+
+### Example Usage
+
+```typescript
+// Invoke via subagent tool
+{
+  agent: "scout",
+  task: "Find how authentication is implemented. Show me the login flow, token validation, and session management."
+}
+```
+
+**What Scout returns:**
+- File paths with exact line ranges
+- Critical types/interfaces/functions (with code)
+- Architecture explanation
+- Recommendation on where to start
+
+<Note>
+Scout's output is designed to be handed to another agent or included in the main conversation without re-reading everything.
+</Note>
+
+---
+
+## Researcher — Web Research
+
+**Role:** Find current, accurate information using web search and synthesize it into a clear report.
+
+### When to Use Researcher
+
+- You need up-to-date information not in the LLM's training data
+- You want to compare multiple sources on a topic
+- You need factual grounding for a decision
+- You want to verify current API documentation or library versions
+
+### How Researcher Works
+
+**Tools available:** `web_search`, `bash`
+
+**Strategy:**
+1. Search for the topic with 2-3 targeted queries to get breadth
+2. Synthesize findings into a coherent summary
+3. Cite sources with URLs
+
+### Output Format
+
+```markdown
+## Summary
+
+Brief 2-3 sentence overview.
+
+## Key Findings
+
+• [Finding 1] — [Source URL]
+• [Finding 2] — [Source URL]
+• [Finding 3] — [Source URL]
+
+## Sources
+
+1. [Title] — [URL]
+2. [Title] — [URL]
+3. [Title] — [URL]
+```
+
+### Example Usage
+
+```typescript
+// Invoke via subagent tool
+{
+  agent: "researcher",
+  task: "What are the breaking changes in Next.js 15? Focus on App Router and server components."
+}
+```
+
+**What Researcher returns:**
+- Summary of findings
+- Key points with source URLs
+- Full source list
+
+<Warning>
+Researcher is factual. It does not speculate beyond what sources say. If results conflict, it notes the conflict.
+</Warning>
+
+---
+
+## Worker — General-Purpose Execution
+
+**Role:** General-purpose subagent with full capabilities, isolated context.
+
+### When to Use Worker
+
+- You need to execute a self-contained task without polluting the main conversation
+- You want to isolate risky operations (e.g., experimental refactoring)
+- You need to handle a large file transformation that would fill the context window
+- You want to run a task in parallel with the main conversation
+
+### How Worker Works
+
+**Tools available:** All standard tools (read, write, edit, bash, glob, grep, etc.)
+
+**Strategy:**
+Work autonomously to complete the assigned task. Use all available tools as needed.
+
+**Important restrictions:**
+- Do **not** spawn subagents or act as an orchestrator unless explicitly instructed
+- Do **not** call `gsd_scout`, `subagent`, `launch_parallel_view`, or `gsd_execute_parallel` on your own initiative
+- If the task looks like GSD orchestration, stop and report that the caller should use the appropriate specialist agent
+
+### Output Format
+
+```markdown
+## Completed
+
+What was done.
+
+## Files Changed
+
+- `path/to/file.ts` - what changed
+- `path/to/other.ts` - what changed
+
+## Notes (if any)
+
+Anything the main agent should know.
+```
+
+### Example Usage
+
+```typescript
+// Invoke via subagent tool
+{
+  agent: "worker",
+  task: "Refactor src/utils/format.ts to use the new date library. Update all imports in src/components/. Run tests to verify nothing broke."
+}
+```
+
+**What Worker returns:**
+- Summary of completed work
+- List of files changed with descriptions
+- Notes for the main agent (e.g., test results, warnings)
+
+<Tip>
+Worker is ideal for tasks that are well-defined but would consume a lot of context in the main conversation.
+</Tip>
+
+---
+
+## Invocation Modes
+
+The `subagent` tool supports three invocation modes:
+
+### Single
+
+Run one subagent:
+
+```typescript
+{
+  agent: "scout",
+  task: "Find the authentication implementation"
+}
+```
+
+### Parallel
+
+Run multiple subagents concurrently (max 8, max 4 concurrent):
+
+```typescript
+{
+  tasks: [
+    { agent: "scout", task: "Find auth implementation" },
+    { agent: "scout", task: "Find payment integration" },
+    { agent: "researcher", task: "Latest Stripe API changes" }
+  ]
+}
+```
+
+**Use for:** Independent research tasks, parallel codebase exploration
+
+### Chain
+
+Run subagents sequentially, passing output forward:
+
+```typescript
+{
+  chain: [
+    { agent: "scout", task: "Find the user model definition" },
+    { agent: "worker", task: "Add email validation to the user model found in {previous}" }
+  ]
+}
+```
+
+**Use for:** Multi-step workflows where each step depends on the previous
+
+---
+
+## Agent Configuration
+
+Agents are defined in `~/.gsd/agent/agents/` as markdown files with frontmatter:
+
+```markdown
+---
+name: scout
+description: Fast codebase recon that returns compressed context
+tools: read, grep, find, ls, bash
+---
+
+You are a scout. Quickly investigate a codebase and return structured findings...
+```
+
+**Frontmatter fields:**
+- `name` — Agent identifier
+- `description` — What the agent does
+- `tools` — Comma-separated list of allowed tools
+
+**Body:** System prompt for the agent
+
+---
+
+## Comparison Table
+
+| Agent | Tools | Output | Best For |
+|-------|-------|--------|----------|
+| Scout | read, grep, find, ls, bash | Files + line ranges, key code, architecture | Codebase exploration |
+| Researcher | web_search, bash | Summary, key findings, sources | Web research |
+| Worker | All tools | Completed work, files changed, notes | Self-contained tasks |
+
+---
+
+## Usage Statistics
+
+Subagent invocations capture detailed usage stats:
+
+- **Turns** — Number of agent turns
+- **Input tokens** — ↑ (prompt + tool results)
+- **Output tokens** — ↓ (agent responses)
+- **Cache read/write** — Prompt caching stats
+- **Cost** — Total cost in USD
+- **Context tokens** — Context window usage
+- **Model** — Which model was used
+
+**Displayed in subagent tool output for cost tracking.**
+
+---
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="When to use Scout vs. reading files directly">
+    Use Scout when:
+    - You need to explore multiple interconnected files
+    - You don't know exactly where the relevant code is
+    - You want a high-level architecture summary
+    
+    Read files directly when:
+    - You know exactly which file to read
+    - You need the full file content (not just excerpts)
+    - You're making targeted edits
+  </Accordion>
+  
+  <Accordion title="When to use Researcher vs. direct web search">
+    Use Researcher when:
+    - You need synthesized information from multiple sources
+    - You want a structured report with citations
+    - You don't want search results to pollute the main conversation
+    
+    Use direct web search when:
+    - You need a quick answer from a single query
+    - You want to browse results interactively
+    - You're doing exploratory research
+  </Accordion>
+  
+  <Accordion title="When to use Worker vs. doing work in main conversation">
+    Use Worker when:
+    - The task is self-contained and well-defined
+    - The task would consume a lot of context (large file transformations)
+    - You want to isolate risky operations
+    - You want to parallelize work
+    
+    Do work in main conversation when:
+    - The task requires back-and-forth with the user
+    - The task depends on recent conversation context
+    - The task is exploratory (not well-defined yet)
+  </Accordion>
+  
+  <Accordion title="Parallel vs. Chain modes">
+    **Parallel:**
+    - Independent tasks (e.g., research 3 different topics)
+    - Faster (runs concurrently)
+    - No data flow between tasks
+    
+    **Chain:**
+    - Sequential dependencies (e.g., scout → worker)
+    - Each task can reference `{previous}` output
+    - Slower (runs serially)
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Subagent Tool" icon="sitemap" href="/extensions/bundled-extensions#subagent">
+    How to invoke subagents from the main conversation
+  </Card>
+  
+  <Card title="Extensions Overview" icon="puzzle-piece" href="/extensions/overview">
+    Learn about all bundled extensions
+  </Card>
+</CardGroup>

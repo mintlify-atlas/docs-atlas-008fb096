@@ -1,0 +1,308 @@
+---
+title: Git Worktrees
+description: Parallel workspaces for experimental features and alternative approaches
+---
+
+GSD's worktree system lets you run multiple independent work streams in the same project. Each worktree gets its own branch and working directory under `.gsd/worktrees/`, enabling parallel auto-mode sessions without context pollution.
+
+## Why Worktrees
+
+Git worktrees solve the "what if I want to try a different approach?" problem:
+
+- **Parallel exploration** — Run auto-mode on an experimental feature branch while main continues
+- **Isolated planning** — Create a worktree for alternative roadmaps without affecting the main `.gsd/` state
+- **Safe experimentation** — Test risky architectural changes in isolation, merge back only if they work
+- **Two terminals, two streams** — Terminal 1 builds the MVP on main, Terminal 2 explores the v2 architecture in a worktree
+
+<Note>
+  GSD worktrees are **not** for long-running feature branches. They're for short-lived experiments (hours to days). Once the work proves valuable, merge it back to main and remove the worktree.
+</Note>
+
+## Quick Start
+
+```bash
+# Create and switch to a new worktree
+/worktree new-feature
+
+# Run auto-mode in the worktree
+/gsd auto
+
+# When done, merge back to main
+/worktree merge new-feature
+
+# Return to the main tree
+/worktree return
+
+# Clean up
+/worktree remove new-feature
+```
+
+## Worktree Lifecycle
+
+<Steps>
+  <Step title="Create a worktree">
+    ```bash
+    /worktree experimental-ui
+    ```
+    
+    This:
+    - Creates `.gsd/worktrees/experimental-ui/` with a full working copy
+    - Creates branch `worktree/experimental-ui` from current main
+    - Switches the terminal into the worktree directory
+    - Auto-commits any dirty files on the previous branch before switching
+    
+    If the worktree inherits existing GSD milestones from main, you'll be asked:
+    
+    - **Continue** — keep milestones, pick up where main left off
+    - **Start fresh** — clear milestones so `/gsd auto` runs the discuss flow
+  </Step>
+
+  <Step title="Work in the worktree">
+    The worktree is a full git working tree. All GSD commands work normally:
+    
+    ```bash
+    /gsd auto          # Run auto-mode
+    /gsd discuss       # Talk through the approach
+    /gsd status        # Check progress
+    ```
+    
+    The worktree has its own `.gsd/` directory. Changes don't affect the main tree until you merge.
+  </Step>
+
+  <Step title="Merge back to main">
+    ```bash
+    /worktree merge experimental-ui
+    ```
+    
+    GSD first tries a **deterministic squash merge**:
+    
+    - Switches back to the main branch
+    - Runs `git merge --squash worktree/experimental-ui`
+    - Commits with message `feat(experimental-ui): merge worktree experimental-ui`
+    
+    If the merge hits conflicts, GSD falls back to an **LLM-guided merge** that analyzes both GSD artifacts and code changes, then dispatches a specialized prompt to resolve conflicts intelligently.
+  </Step>
+
+  <Step title="Remove the worktree">
+    ```bash
+    /worktree remove experimental-ui
+    ```
+    
+    Deletes the worktree directory and its branch. If you're currently inside the worktree, GSD switches you back to main first.
+  </Step>
+</Steps>
+
+## Commands
+
+| Command | What it does |
+|---------|-------------|
+| `/worktree <name>` | Create and switch to a new worktree (or switch if it exists) |
+| `/worktree create <name>` | Explicit create (same as above) |
+| `/worktree switch <name>` | Switch into an existing worktree |
+| `/worktree return` | Switch back to the main project tree |
+| `/worktree list` | List all GSD-managed worktrees |
+| `/worktree merge [name] [target]` | Merge worktree into target branch (auto-detects when inside a worktree) |
+| `/worktree remove <name>` | Remove a worktree and delete its branch |
+| `/worktree remove all` | Remove all worktrees |
+| `/wt` | Alias for `/worktree` |
+
+<Accordion title="Auto-detect merge syntax">
+  When you're **inside a worktree**, you can omit the name:
+  
+  ```bash
+  # Inside worktree "new-feature"
+  /worktree merge              # Merges new-feature → main
+  /worktree merge develop      # Merges new-feature → develop
+  ```
+  
+  When you're **in the main tree**, you must specify the worktree name:
+  
+  ```bash
+  # In main tree
+  /worktree merge new-feature            # Merges new-feature → main
+  /worktree merge new-feature develop    # Merges new-feature → develop
+  ```
+</Accordion>
+
+## Directory Structure
+
+Worktrees live under `.gsd/worktrees/`:
+
+```
+project/
+├── .gsd/
+│   ├── worktrees/
+│   │   ├── experimental-ui/     # Full working copy
+│   │   │   ├── .git             # Points to shared .git/worktrees/
+│   │   │   ├── .gsd/            # Independent GSD state
+│   │   │   ├── src/
+│   │   │   └── ...
+│   │   └── new-architecture/
+│   │       └── ...
+│   ├── milestones/              # Main tree milestones
+│   └── STATE.md
+├── .git/
+│   └── worktrees/               # Git metadata for each worktree
+│       ├── experimental-ui/
+│       └── new-architecture/
+└── src/
+```
+
+Each worktree:
+- **Shares** the `.git/` object database (commits, trees, blobs)
+- **Isolates** the working directory, index, and HEAD
+- **Isolates** `.gsd/` planning state
+
+## Branch Naming
+
+Worktree branches follow the pattern `worktree/<name>`:
+
+```bash
+/worktree experimental-ui
+# Creates branch: worktree/experimental-ui
+
+/worktree v2-refactor
+# Creates branch: worktree/v2-refactor
+```
+
+This keeps worktree branches visually distinct from feature branches.
+
+## Merge Behavior
+
+### Deterministic Path (Preferred)
+
+GSD first attempts a clean squash merge:
+
+```bash
+git merge --squash worktree/experimental-ui
+git commit -m "feat(experimental-ui): merge worktree experimental-ui"
+```
+
+Commit type is inferred from the worktree name:
+- `fix-*` → `fix`
+- `feat-*` → `feat`
+- `docs-*` → `docs`
+- `refactor-*` → `refactor`
+- Everything else → `feat`
+
+One squash commit lands on main. The worktree branch is deleted after merge.
+
+### LLM Fallback (Conflicts)
+
+If the squash merge hits conflicts, GSD aborts and dispatches an LLM-guided merge session.
+
+The merge prompt includes:
+- **Commit log** — all commits on the worktree branch
+- **File change summary** — added, modified, removed files with +/- line counts
+- **GSD artifact diff** — changes to `.gsd/` files (plans, roadmaps, summaries)
+- **Code diff** — changes to non-`.gsd/` files
+
+The agent resolves conflicts, runs tests, and commits the merge.
+
+<Warning>
+  The LLM merge path is a fallback for genuine conflicts. If you're hitting conflicts frequently, your worktree branches are diverging too far from main. Merge back more often.
+</Warning>
+
+## Auto-Commit on Switch
+
+When you switch between worktrees (or return to main), GSD auto-commits any dirty files:
+
+```
+Auto-committed on previous branch before switching.
+```
+
+Commit message format:
+```
+wip(worktree-switch): auto-commit before switching to <target>
+```
+
+This prevents:
+- Lost work when switching between trees
+- Merge conflicts from uncommitted changes
+- Confusion about which tree has which edits
+
+<Note>
+  Auto-commits are WIP commits, not polished work. GSD squashes everything when merging back to main, so these intermediate commits don't pollute the main branch history.
+</Note>
+
+## Worktree State Isolation
+
+Each worktree gets its own `.gsd/` directory, including:
+
+- **Milestones** — independent roadmaps and slice plans
+- **STATE.md** — current phase and unit
+- **DECISIONS.md** — architectural decisions (inherited from main, then diverges)
+- **metrics.json** — cost tracking for this worktree's work
+- **auto.lock** — crash recovery state
+
+The main tree's `.gsd/` is **not** affected by worktree changes until you merge.
+
+## Fresh Start vs. Continue
+
+When you create a worktree from a branch with existing milestones:
+
+```
+Worktree Setup
+
+This worktree inherited existing GSD milestones from the main branch.
+
+  Continue — keep milestones and pick up where main left off
+  Start fresh — clear milestones so /gsd auto starts a new project
+```
+
+**Continue** is useful when:
+- You want to try a different implementation approach for the same milestone
+- You're experimenting with task ordering within an existing slice
+
+**Start fresh** is useful when:
+- The worktree explores a completely different feature set
+- You want to prototype a new architecture from scratch
+
+## Two Terminals, Two Streams
+
+The most powerful worktree workflow:
+
+**Terminal 1 — Main tree (MVP)**
+```bash
+gsd
+/gsd auto
+# Builds the core MVP on main
+```
+
+**Terminal 2 — Worktree (exploration)**
+```bash
+gsd
+/worktree advanced-features
+/gsd auto
+# Explores advanced features in parallel
+```
+
+Both auto-mode sessions read and write their own `.gsd/` state. No conflicts, no pollution. When the worktree proves its value, merge it back.
+
+## Cleanup
+
+Remove all worktrees:
+
+```bash
+/worktree remove all
+```
+
+Confirmation prompt shows all worktrees that will be deleted. Branches are deleted automatically.
+
+## Related Files
+
+- `worktree-command.ts:94` — Command handler and UI
+- `worktree-manager.ts:94` — Core operations (create, list, merge, remove)
+- `worktree.ts` — Auto-commit logic
+- `worktree-manager.ts:276` — Diff summary and merge preview
+
+## See Also
+
+<CardGroup cols={2}>
+  <Card title="Git Strategy" icon="code-branch" href="/concepts/git-strategy">
+    How GSD manages branches and commits
+  </Card>
+  <Card title="Auto Mode" icon="robot" href="/usage/auto-mode">
+    Running parallel auto-mode sessions
+  </Card>
+</CardGroup>

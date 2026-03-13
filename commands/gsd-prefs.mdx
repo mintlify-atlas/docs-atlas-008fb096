@@ -1,0 +1,231 @@
+---
+title: "gsd prefs"
+description: "Manage global and project-level GSD preferences"
+---
+
+## Overview
+
+The `/gsd prefs` command manages GSD preferences files that control skills, models, custom instructions, and behavior settings. Preferences can be set globally (user-level) or per-project, with project settings overriding global ones.
+
+## Syntax
+
+```bash
+/gsd prefs [global|project|status]
+```
+
+## Subcommands
+
+<ParamField path="global" type="string">
+  Opens or creates the global preferences file at `~/.gsd/preferences.md`. Global preferences apply to all GSD projects unless overridden by project preferences.
+</ParamField>
+
+<ParamField path="project" type="string">
+  Opens or creates the project preferences file at `.gsd/preferences.md` in the current directory. Project preferences override global settings for the current project.
+</ParamField>
+
+<ParamField path="status" type="string">
+  Displays the current preferences status, including which files are present, how many skills are resolved, and any unresolved skill references.
+</ParamField>
+
+## Preferences File Structure
+
+Preferences are stored in Markdown files with YAML frontmatter. The structure includes:
+
+### Skill Management
+
+```yaml
+---
+version: 1
+always_use_skills:
+  - skill-name-1
+  - /absolute/path/to/skill
+prefer_skills:
+  - skill-name-2
+avoid_skills:
+  - skill-name-3
+
+skill_rules:
+  - when: "working on frontend code"
+    use:
+      - react-patterns
+      - css-best-practices
+  - when: "building APIs"
+    prefer:
+      - rest-api-design
+    avoid:
+      - graphql-patterns
+---
+```
+
+### Model Configuration
+
+```yaml
+models:
+  research: claude-sonnet-4-6
+  planning: claude-opus-4-6
+  execution: claude-sonnet-4-6
+  completion: claude-sonnet-4-6
+```
+
+### Custom Instructions
+
+```yaml
+custom_instructions:
+  - Always write comprehensive tests for new features
+  - Use TypeScript strict mode
+  - Follow the project's existing code style
+```
+
+### Auto-Mode Supervisor
+
+```yaml
+auto_supervisor:
+  model: claude-opus-4-6
+  soft_timeout_minutes: 20
+  idle_timeout_minutes: 10
+  hard_timeout_minutes: 30
+```
+
+### Git Configuration
+
+```yaml
+git:
+  auto_push: true
+  push_branches: true
+  remote: origin
+  snapshots: true
+  pre_merge_check: true
+  commit_type: feat
+  main_branch: main
+```
+
+### Other Settings
+
+```yaml
+skill_discovery: suggest  # auto | suggest | off
+uat_dispatch: true
+budget_ceiling: 100.0
+
+remote_questions:
+  channel: slack
+  channel_id: "C1234567890"
+  timeout_minutes: 10
+  poll_interval_seconds: 5
+```
+
+## Skill Resolution
+
+Skills can be referenced in three ways:
+
+1. **Bare name**: `mintlify` - Searches in `~/.gsd/agent/skills/` and `.pi/agent/skills/`
+2. **Absolute path**: `/path/to/skill/SKILL.md` - Direct file reference
+3. **Absolute directory**: `/path/to/skill/` - Looks for `SKILL.md` inside
+
+### Resolution Priority
+
+User skills (`~/.gsd/agent/skills/`) take precedence over project skills (`.pi/agent/skills/`).
+
+## Examples
+
+### Create Global Preferences
+
+```bash
+/gsd prefs global
+```
+
+Creates `~/.gsd/preferences.md` if it doesn't exist, then prompts you to edit it.
+
+### Create Project Preferences
+
+```bash
+/gsd prefs project
+```
+
+Creates `.gsd/preferences.md` in the current project, then prompts you to edit it.
+
+### Check Preferences Status
+
+```bash
+/gsd prefs status
+```
+
+**Output:**
+```
+GSD skill prefs — global present: ~/.gsd/preferences.md; project present: .gsd/preferences.md
+Skills: 5 resolved, 1 unresolved
+Unresolved: custom-skill-missing
+```
+
+### Configure Model Preferences
+
+Edit your preferences file to use different models for different phases:
+
+```yaml
+---
+models:
+  research: claude-sonnet-4-6    # Fast, cost-effective for research
+  planning: claude-opus-4-6      # Most capable for planning
+  execution: claude-sonnet-4-6   # Balanced for execution
+  completion: claude-sonnet-4-6  # Fast for completion checks
+---
+```
+
+### Set Up Conditional Skill Rules
+
+```yaml
+---
+skill_rules:
+  - when: "working on database migrations"
+    use:
+      - database-migration-patterns
+      - sql-safety-checks
+  - when: "building user interfaces"
+    prefer:
+      - react-components
+      - accessibility-guide
+    avoid:
+      - jquery-patterns
+---
+```
+
+## File Locations
+
+- **Global preferences**: `~/.gsd/preferences.md`
+- **Legacy global preferences**: `~/.pi/agent/gsd-preferences.md` (fallback)
+- **Project preferences**: `<project-root>/.gsd/preferences.md`
+- **User skills**: `~/.gsd/agent/skills/`
+- **Project skills**: `<project-root>/.pi/agent/skills/`
+
+## Preference Merging
+
+When both global and project preferences exist:
+
+1. **Skill lists** are merged (union of both)
+2. **Model settings** from project override global
+3. **Custom instructions** are concatenated
+4. **Other settings** use project values when set, otherwise fall back to global
+
+## Validation
+
+The preferences system validates:
+
+- Skill list formats
+- Model configuration keys
+- Git settings (branch names, commit types)
+- Remote questions configuration
+- Budget ceiling values
+
+Invalid entries are logged but don't block preference loading.
+
+<Tip>
+Use `/gsd prefs status` regularly to catch unresolved skill references before they cause issues during auto-mode.
+</Tip>
+
+<Warning>
+Changing model preferences affects token costs. More capable models (like Claude Opus) cost more but may produce better results for planning tasks.
+</Warning>
+
+## Related Commands
+
+- [/gsd config](/commands/gsd-config) - Configure Git and other settings
+- [/gsd doctor](/commands/gsd-doctor) - Diagnose and fix project issues

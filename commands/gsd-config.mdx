@@ -1,0 +1,277 @@
+---
+title: "gsd config"
+description: "Configure Git behavior and other GSD settings"
+---
+
+## Overview
+
+The `/gsd config` command provides a way to configure Git integration and other GSD behavior through the preferences system. Configuration is managed via the same preferences files as `/gsd prefs`.
+
+<Note>
+GSD configuration is stored in preferences files. Use `/gsd prefs global` or `/gsd prefs project` to edit configuration.
+</Note>
+
+## Git Configuration Options
+
+All Git configuration is stored in the `git:` section of your preferences file.
+
+### Auto Push
+
+<ParamField path="git.auto_push" type="boolean" default="false">
+  Automatically push commits to the remote repository after each milestone or slice completion.
+</ParamField>
+
+```yaml
+---
+git:
+  auto_push: true
+---
+```
+
+### Push Branches
+
+<ParamField path="git.push_branches" type="boolean" default="false">
+  Automatically push feature branches to remote when working in worktrees or during auto-mode.
+</ParamField>
+
+```yaml
+---
+git:
+  push_branches: true
+---
+```
+
+### Remote
+
+<ParamField path="git.remote" type="string" default="origin">
+  The name of the remote repository to use for push operations.
+</ParamField>
+
+```yaml
+---
+git:
+  remote: upstream
+---
+```
+
+### Snapshots
+
+<ParamField path="git.snapshots" type="boolean" default="true">
+  Create automatic git snapshots (commits) during task execution for rollback capability.
+</ParamField>
+
+```yaml
+---
+git:
+  snapshots: true
+---
+```
+
+### Pre-Merge Check
+
+<ParamField path="git.pre_merge_check" type="boolean | string" default="true">
+  Run checks before merging. Can be `true` (default checks), `false` (no checks), or a custom command string.
+</ParamField>
+
+```yaml
+---
+git:
+  pre_merge_check: true  # Run default checks
+  # OR
+  pre_merge_check: "npm test && npm run lint"  # Custom command
+---
+```
+
+### Commit Type
+
+<ParamField path="git.commit_type" type="string" default="feat">
+  Default commit type for conventional commits. Valid values: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `perf`, `ci`, `build`, `style`.
+</ParamField>
+
+```yaml
+---
+git:
+  commit_type: feat
+---
+```
+
+### Main Branch
+
+<ParamField path="git.main_branch" type="string" default="main">
+  The name of your main development branch (e.g., `main`, `master`, `develop`).
+</ParamField>
+
+```yaml
+---
+git:
+  main_branch: main
+---
+```
+
+## Other Configuration Options
+
+### Skill Discovery
+
+<ParamField path="skill_discovery" type="string" default="suggest">
+  Controls automatic skill discovery during research phase.
+  
+  - `auto`: Automatically install discovered skills
+  - `suggest`: Show suggestions but require confirmation
+  - `off`: Disable skill discovery
+</ParamField>
+
+```yaml
+---
+skill_discovery: suggest
+---
+```
+
+### UAT Dispatch
+
+<ParamField path="uat_dispatch" type="boolean" default="false">
+  Automatically dispatch UAT (User Acceptance Testing) scripts after slice completion.
+</ParamField>
+
+```yaml
+---
+uat_dispatch: true
+---
+```
+
+### Budget Ceiling
+
+<ParamField path="budget_ceiling" type="number" default="undefined">
+  Maximum cost limit (in USD) for LLM operations. Auto-mode will pause when this limit is reached.
+</ParamField>
+
+```yaml
+---
+budget_ceiling: 50.0
+---
+```
+
+## Complete Configuration Example
+
+```yaml
+---
+version: 1
+
+# Git configuration
+git:
+  auto_push: true
+  push_branches: true
+  remote: origin
+  snapshots: true
+  pre_merge_check: "npm test"
+  commit_type: feat
+  main_branch: main
+
+# Skill discovery
+skill_discovery: suggest
+
+# Auto-mode settings
+auto_supervisor:
+  model: claude-opus-4-6
+  soft_timeout_minutes: 20
+  idle_timeout_minutes: 10
+  hard_timeout_minutes: 30
+
+# UAT dispatch
+uat_dispatch: true
+
+# Budget control
+budget_ceiling: 100.0
+
+# Remote questions (Slack/Discord integration)
+remote_questions:
+  channel: slack
+  channel_id: "C1234567890"
+  timeout_minutes: 10
+  poll_interval_seconds: 5
+---
+```
+
+## Configuration Scope
+
+Configuration can be set at two levels:
+
+### Global Configuration
+
+Edit `~/.gsd/preferences.md` to set defaults for all projects:
+
+```bash
+/gsd prefs global
+```
+
+### Project Configuration
+
+Edit `.gsd/preferences.md` to override settings for a specific project:
+
+```bash
+/gsd prefs project
+```
+
+<Tip>
+Project configuration overrides global configuration. Use global config for your defaults and project config for project-specific overrides.
+</Tip>
+
+## Validation
+
+GSD validates configuration on load:
+
+- **Branch names** must match pattern `[a-zA-Z0-9_\-/.]+`
+- **Commit types** must be one of the valid conventional commit types
+- **Budget ceiling** must be a finite positive number
+- **Remote names** must be non-empty strings
+- **Timeout values** must be positive integers
+
+## Examples
+
+### Enable Auto-Push for a Project
+
+```yaml
+---
+git:
+  auto_push: true
+  remote: origin
+---
+```
+
+### Configure CI Integration
+
+```yaml
+---
+git:
+  pre_merge_check: "npm run ci"
+  commit_type: ci
+---
+```
+
+### Set Up Budget Control
+
+```yaml
+---
+budget_ceiling: 25.0
+auto_supervisor:
+  soft_timeout_minutes: 15
+  hard_timeout_minutes: 20
+---
+```
+
+### Disable Git Snapshots
+
+For projects where you want full manual control:
+
+```yaml
+---
+git:
+  snapshots: false
+  auto_push: false
+---
+```
+
+## Related Commands
+
+- [/gsd prefs](/commands/gsd-prefs) - Manage preferences files
+- [/gsd doctor](/commands/gsd-doctor) - Diagnose configuration issues
+- [/worktree](/commands/worktree) - Git worktree management

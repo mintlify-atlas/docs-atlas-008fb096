@@ -1,0 +1,413 @@
+---
+title: "worktree"
+description: "Manage isolated Git worktrees for parallel development"
+---
+
+## Overview
+
+The `/worktree` command (alias `/wt`) manages Git worktrees under `.gsd/worktrees/`. Worktrees allow you to work on multiple branches simultaneously without switching contexts. Each worktree is a separate working directory with its own branch.
+
+<Note>
+Worktrees are created under `.gsd/worktrees/` with branch names like `worktree/name`.
+</Note>
+
+## Syntax
+
+```bash
+/worktree <name>              # Create or switch to worktree
+/worktree list               # List all worktrees
+/worktree switch <name>      # Switch to existing worktree
+/worktree return             # Return to main project tree
+/worktree merge [name] [target]  # Merge worktree into target branch
+/worktree remove <name|all>  # Remove worktree(s)
+```
+
+**Alias:** `/wt` works identically to `/worktree`
+
+## Commands
+
+### Create/Switch
+
+<ParamField path="name" type="string">
+  Create a new worktree or switch to an existing one. If the name exists, switches; otherwise creates.
+</ParamField>
+
+```bash
+/worktree feature-auth
+```
+
+**Output:**
+```
+✓ Worktree feature-auth created and activated.
+
+  path     .gsd/worktrees/feature-auth
+  branch   worktree/feature-auth
+  Auto-committed on previous branch before switching.
+  ✓ Cleared milestones — /gsd auto will start fresh.
+
+  /worktree merge feature-auth  merge back when done
+  /worktree return              switch back to main tree
+```
+
+**Behavior:**
+- Auto-commits dirty files in the current branch before switching
+- Creates branch `worktree/feature-auth` from HEAD
+- Changes working directory to the worktree
+- Prompts whether to keep or clear existing GSD milestones
+
+### List
+
+```bash
+/worktree list
+```
+
+**Output:**
+```
+GSD Worktrees
+
+  feature-auth  ● active
+    branch  worktree/feature-auth
+    path    .gsd/worktrees/feature-auth
+
+  bugfix-login
+    branch  worktree/bugfix-login
+    path    .gsd/worktrees/bugfix-login
+
+  main tree  /home/user/project
+```
+
+### Switch
+
+```bash
+/worktree switch feature-auth
+```
+
+Explicitly switches to an existing worktree. Functionally equivalent to `/worktree feature-auth` when the worktree exists.
+
+### Return
+
+```bash
+/worktree return
+```
+
+Switches back to the main project tree. Auto-commits dirty files before returning.
+
+**Output:**
+```
+✓ Returned to main project tree.
+
+  path  /home/user/project
+  Auto-committed on worktree branch before returning.
+```
+
+### Merge
+
+```bash
+/worktree merge [name] [target]
+```
+
+<ParamField path="name" type="string">
+  The worktree to merge. Optional if you're currently in a worktree (auto-detects).
+</ParamField>
+
+<ParamField path="target" type="string" default="main">
+  The target branch to merge into. Defaults to the main branch (usually `main` or `master`).
+</ParamField>
+
+**Examples:**
+
+```bash
+# From inside a worktree, merge into main
+/worktree merge
+
+# From anywhere, merge specific worktree into main
+/worktree merge feature-auth
+
+# Merge into a different branch
+/worktree merge feature-auth develop
+```
+
+**Merge Process:**
+
+1. **Preview**: Shows file changes, line counts, affected files
+2. **Confirmation**: You approve or cancel
+3. **Squash merge**: Attempts deterministic squash merge (no conflicts)
+4. **LLM fallback**: On conflict, dispatches to agent for intelligent resolution
+
+**Preview:**
+```
+Merge feature-auth → main
+
+  15 files changed, +487 -123 lines (12 code, 3 GSD)
+
+  Added:
+    + src/auth/login.ts +145 -0
+    + src/auth/session.ts +98 -0
+
+  Modified:
+    ~ src/app.ts +42 -15
+    ~ package.json +8 -2
+
+  [Merge] [Cancel]
+```
+
+**Success:**
+```
+✓ Merged feature-auth → main (deterministic squash)
+
+  15 files changed, +487 -123 lines
+  commit: feat(feature-auth): merge worktree feature-auth
+```
+
+**Conflict:**
+```
+Deterministic merge hit conflicts — falling back to LLM-guided merge.
+✓ Merge helper started for feature-auth (12 code + 3 GSD artifact changes)
+```
+
+The agent then reviews conflicts and creates a clean merge.
+
+### Remove
+
+```bash
+/worktree remove <name|all>
+```
+
+<ParamField path="name" type="string">
+  Name of the worktree to remove. Use `all` to remove all worktrees.
+</ParamField>
+
+**Examples:**
+
+```bash
+/worktree remove feature-auth
+/worktree remove all
+```
+
+**Confirmation:**
+```
+Remove Worktree
+
+Remove worktree feature-auth and delete branch worktree/feature-auth?
+
+  [Remove] [Cancel]
+```
+
+<Warning>
+Removing a worktree deletes the branch. Ensure changes are merged before removing.
+</Warning>
+
+## Use Cases
+
+### Parallel Feature Development
+
+Work on multiple features simultaneously:
+
+```bash
+/worktree feature-a
+# Work on feature A
+/worktree return
+
+/worktree feature-b
+# Work on feature B
+/worktree return
+
+# Merge both when ready
+/worktree merge feature-a
+/worktree merge feature-b
+```
+
+### Bug Fix + Feature Work
+
+Fix a bug without disrupting feature work:
+
+```bash
+# Currently working on a feature
+/worktree bugfix-critical
+# Fix the bug, test, commit
+/worktree merge
+/worktree return
+# Back to feature work
+```
+
+### Experimentation
+
+Try risky changes without affecting main work:
+
+```bash
+/worktree experiment-refactor
+# Try new approach
+# If successful: /worktree merge
+# If failed: /worktree remove experiment-refactor
+```
+
+### GSD Auto-Mode Isolation
+
+Run auto-mode in a worktree to keep main tree clean:
+
+```bash
+/worktree auto-milestone-2
+# Choose "Start fresh" to clear existing milestones
+/gsd auto
+# Let it run
+/worktree merge
+```
+
+## Auto-Commit Behavior
+
+Worktrees automatically commit dirty files when:
+
+- Creating a new worktree
+- Switching between worktrees
+- Returning to the main tree
+- Merging (commits both source and target)
+
+**Commit message format:**
+```
+wip: worktree-switch to <name>
+```
+
+This ensures you never lose work when switching contexts.
+
+## Milestone Inheritance
+
+When creating a worktree, you choose how to handle existing GSD milestones:
+
+### Continue (Keep Milestones)
+
+Keeps the current GSD state. Useful for:
+- Continuing work from main
+- Branching at a specific milestone
+- Testing changes against existing state
+
+### Start Fresh (Clear Milestones)
+
+Clears `.gsd/milestones/` and planning files. Useful for:
+- New features unrelated to main project
+- Isolated experiments
+- Separate auto-mode runs
+
+<Note>
+State clearing only removes milestones and planning files. It preserves `.gsd/` directory structure and preferences.
+</Note>
+
+## Integration with GSD
+
+### Worktree Context Injection
+
+When in a worktree, the system prompt includes:
+
+```
+[WORKTREE CONTEXT — OVERRIDES CURRENT WORKING DIRECTORY ABOVE]
+IMPORTANT: Ignore the "Current working directory" shown earlier in this prompt.
+The actual current working directory is: .gsd/worktrees/feature-auth
+
+You are working inside a GSD worktree.
+- Worktree name: feature-auth
+- Worktree path (this is the real cwd): .gsd/worktrees/feature-auth
+- Main project: /home/user/project
+- Branch: worktree/feature-auth
+
+All file operations, bash commands, and GSD state resolve against the worktree path above.
+```
+
+This ensures the agent operates in the correct context.
+
+### Dynamic CWD
+
+All file operations (read, write, edit, bash) use the current working directory dynamically. When you switch worktrees, subsequent commands automatically target the new location.
+
+## Technical Details
+
+### Branch Naming
+
+Worktree branches follow the pattern:
+```
+worktree/<name>
+```
+
+For example: `worktree/feature-auth`, `worktree/bugfix-login`
+
+### Directory Structure
+
+```
+.gsd/
+└── worktrees/
+    ├── feature-auth/
+    │   ├── .git           (worktree gitdir reference)
+    │   ├── src/
+    │   ├── .gsd/          (separate GSD state)
+    │   └── ...
+    └── bugfix-login/
+        └── ...
+```
+
+Each worktree has:
+- Its own working directory
+- Its own `.gsd/` state (if not cleared)
+- Shared Git object database (no duplication)
+
+### Merge Strategy
+
+Worktree merges use:
+
+1. **Deterministic path**: `git merge --squash` + commit
+2. **LLM fallback**: Agent-guided conflict resolution
+
+**Squash merge benefits:**
+- Clean history (one commit per worktree)
+- No merge bubbles
+- Easy to revert
+
+**Commit type inference:**
+
+Commit type is inferred from worktree name:
+- `feature-*` → `feat`
+- `fix-*` / `bugfix-*` → `fix`
+- `refactor-*` → `refactor`
+- `docs-*` → `docs`
+- `test-*` → `test`
+- Default → `feat`
+
+## Keyboard Shortcuts
+
+No direct keyboard shortcuts, but worktree commands are available:
+- In the command palette: `/worktree`
+- Via autocomplete: Type `/wt` and press Tab
+
+## Troubleshooting
+
+### Worktree Directory Missing
+
+If the `.gsd/worktrees/<name>` directory is deleted but Git still tracks it:
+
+```bash
+git worktree prune
+/worktree list  # Should no longer show it
+```
+
+### Branch Conflicts
+
+If you manually create a branch named `worktree/<name>`, the worktree command will use it instead of creating a new one. Delete the conflicting branch first:
+
+```bash
+git branch -d worktree/old-name
+```
+
+### Merge Conflicts
+
+When LLM fallback is triggered:
+1. The agent reviews diffs
+2. Resolves conflicts intelligently
+3. Creates a clean merge commit
+4. Reports success/failure
+
+You can also abort and merge manually:
+```bash
+git merge --abort
+```
+
+## Related Commands
+
+- [/gsd](/commands/gsd) - Main GSD command
+- [/gsd status](/commands/gsd-status) - View GSD state (respects current worktree)

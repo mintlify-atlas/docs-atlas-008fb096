@@ -1,0 +1,345 @@
+---
+title: Two Terminal Workflow
+description: Run auto mode in one terminal, steer from another without stopping execution
+---
+
+The two terminal workflow is GSD's power-user mode. Run auto mode in terminal 1, steer from terminal 2. Both read and write the same `.gsd/` files on disk, so your decisions are picked up automatically at the next phase boundary — no need to stop auto mode.
+
+## Overview
+
+This workflow gives you:
+
+- **Uninterrupted execution** — auto mode keeps building while you work
+- **Real-time steering** — queue milestones, discuss architecture, check status
+- **Shared state** — both terminals read/write `.gsd/` files
+- **Phase boundary sync** — changes take effect when current unit completes
+- **Zero coordination overhead** — no IPC, no websockets, just files
+
+<Note>
+This is how GSD was designed to be used for production work. Let auto mode handle execution while you stay ahead on planning and architecture.
+</Note>
+
+## Setup
+
+### Terminal 1: Auto Mode
+
+Start autonomous execution:
+
+```bash
+cd ~/projects/my-app
+gsd
+/gsd auto
+```
+
+Auto mode reads `.gsd/STATE.md`, dispatches the next unit, and continues until the milestone is complete.
+
+### Terminal 2: Steering
+
+Open a second terminal in the same project:
+
+```bash
+cd ~/projects/my-app
+gsd
+```
+
+Now you have an interactive session while auto mode runs in terminal 1.
+
+## What You Can Do in Terminal 2
+
+### Check Progress
+
+```bash
+/gsd status
+```
+
+Shows:
+
+- Current milestone, slice, and task
+- Progress (slices done, tasks done)
+- Cost and token usage
+- Estimated completion cost
+- Blockers (if any)
+
+### Queue Future Milestones
+
+```bash
+/gsd queue
+```
+
+Starts a conversational flow to plan milestones 2, 3, 4, etc. The agent:
+
+1. Reads existing milestones (complete, active, pending)
+2. Discusses scope and dependencies with you
+3. Writes `M002-CONTEXT.md`, `M003-CONTEXT.md`, etc.
+4. Appends to `PROJECT.md` and `QUEUE.md`
+
+When auto mode finishes M001, it automatically picks up M002.
+
+<Tip>
+Queue milestones while auto mode executes the current one. By the time M001 completes, M002 is already planned and ready to execute.
+</Tip>
+
+### Discuss Architecture
+
+```bash
+/gsd discuss
+```
+
+Starts a conversational session about architecture, tech stack, or design decisions. The agent writes to:
+
+- `DECISIONS.md` — append-only register of architectural decisions
+- `M001-CONTEXT.md` — milestone-specific context and constraints
+
+Auto mode reads these files when planning slices, so your decisions are reflected immediately.
+
+### Inspect State Files
+
+Read any `.gsd/` file to see what auto mode is doing:
+
+```bash
+# Terminal 2
+> Read .gsd/STATE.md
+
+# Shows:
+# Active milestone: M001
+# Active slice: S02
+# Active task: T03
+# Phase: execution
+```
+
+You can also read summaries, plans, and research files:
+
+```bash
+> Read .gsd/milestones/M001/slices/S02/T03-SUMMARY.md
+```
+
+### Modify Roadmaps (Advanced)
+
+If you need to adjust the plan while auto mode runs, edit the roadmap:
+
+```bash
+# Terminal 2
+> Edit .gsd/milestones/M001/M001-ROADMAP.md
+
+# Add a new slice or reorder dependencies
+# Auto mode picks up changes at the next slice boundary
+```
+
+<Warning>
+Don't modify files for units that are currently executing. Wait for the current unit to finish (check `/gsd status`) before editing plans or roadmaps.
+</Warning>
+
+## How State Synchronization Works
+
+Both terminals access the same `.gsd/` directory:
+
+```
+project/
+├── .gsd/
+│   ├── STATE.md
+│   ├── PROJECT.md
+│   ├── DECISIONS.md
+│   ├── QUEUE.md
+│   └── milestones/
+│       ├── M001/
+│       │   ├── M001-CONTEXT.md      ← Terminal 2 can write here
+│       │   ├── M001-ROADMAP.md      ← Terminal 2 can edit
+│       │   └── slices/
+│       │       ├── S01/
+│       │       │   ├── S01-PLAN.md
+│       │       │   └── T01-SUMMARY.md  ← Terminal 1 writes here
+│       └── M002/
+│           └── M002-CONTEXT.md       ← Terminal 2 writes here
+```
+
+- **Terminal 1 (auto mode)** reads state, executes units, writes summaries
+- **Terminal 2 (interactive)** reads state, queues milestones, writes context
+
+Changes are picked up at phase boundaries:
+
+| Phase Boundary | When It Occurs | What Gets Re-Read |
+|----------------|----------------|------------------|
+| Slice boundary | After complete-slice finishes | `M001-ROADMAP.md`, `DECISIONS.md`, `M001-CONTEXT.md` |
+| Task boundary | After execute-task finishes | `S01-PLAN.md`, dependency summaries |
+| Milestone boundary | After all slices complete | `STATE.md`, `QUEUE.md`, next milestone's CONTEXT |
+
+<Note>
+Auto mode doesn't poll files mid-unit. Changes take effect when the current unit completes and the next unit dispatches.
+</Note>
+
+## Example Workflows
+
+### Workflow 1: Queue Future Work
+
+```bash
+# Terminal 1
+$ gsd
+> /gsd auto
+# Executing M001, slice S02, task T03...
+
+# Terminal 2
+$ gsd
+> /gsd queue
+# Agent: "What milestones should we plan next?"
+> Add M002: Admin dashboard and M003: Email notifications
+# Agent writes M002-CONTEXT.md and M003-CONTEXT.md
+
+# Terminal 1 (5 minutes later)
+# M001 complete. Advancing to M002: Admin dashboard.
+# Auto mode picks up M002 automatically.
+```
+
+### Workflow 2: Architectural Decisions
+
+```bash
+# Terminal 1
+$ gsd
+> /gsd auto
+# Executing M001...
+
+# Terminal 2
+$ gsd
+> /gsd discuss
+# Agent: "What would you like to discuss?"
+> Should we use REST or GraphQL for the API?
+# (discuss trade-offs)
+> Let's go with REST for now, GraphQL in M003
+# Agent writes to DECISIONS.md:
+#   - Use REST for M001-M002 (simpler, faster to ship)
+#   - Defer GraphQL to M003 (allows field-level auth)
+
+# Terminal 1 (next slice)
+# Auto mode reads DECISIONS.md when planning S03
+# Plans REST endpoints instead of GraphQL schema
+```
+
+### Workflow 3: Real-Time Monitoring
+
+```bash
+# Terminal 1
+$ gsd
+> /gsd auto
+# Executing M001...
+
+# Terminal 2
+$ watch -n 10 'gsd -c "/gsd status"'
+# Updates every 10 seconds:
+#   M001 Slice 3/5  Task 2/4
+#   Cost: $2.34  Tokens: 89k
+#   Estimated total: $5.67
+```
+
+<Tip>
+Use `watch` or a dashboard tool to monitor progress in real-time without interrupting auto mode.
+</Tip>
+
+### Workflow 4: Adjust Plans Mid-Execution
+
+```bash
+# Terminal 1
+$ gsd
+> /gsd auto
+# Executing M001, slice S02...
+
+# Terminal 2
+$ gsd
+> /gsd status
+# M001 Slice 2/5  Task 3/3 (executing)
+# Wait for S02 to complete...
+
+# (2 minutes later)
+> /gsd status
+# M001 Slice 2/5  Task 3/3 (complete)
+# Phase: summarizing
+
+> Edit .gsd/milestones/M001/M001-ROADMAP.md
+# Add S06: Integration tests
+# Mark S04 as [depends: S02, S03, S06]
+
+# Terminal 1 (after S02 completes)
+# Reassessing roadmap...
+# Auto mode picks up new S06 and reordered dependencies
+# Plans S06 before executing S04
+```
+
+## Concurrency Safety
+
+File writes are atomic on most filesystems (ext4, APFS, NTFS). GSD uses:
+
+- **Read-modify-write for appends** — `DECISIONS.md`, `PROJECT.md`, `QUEUE.md`
+- **Single-writer units** — only terminal 1 writes summaries and plans
+- **Non-overlapping writes** — terminal 2 writes future milestone context
+
+Collisions are rare. If they occur:
+
+1. Git will show conflicts in `.gsd/`
+2. Resolve manually (pick the correct version)
+3. Run `/gsd auto` to resume
+
+<Warning>
+Don't run `/gsd auto` in both terminals simultaneously. Only one auto mode instance should run per project.
+</Warning>
+
+## Performance Impact
+
+The two terminal workflow has **zero performance impact** on auto mode:
+
+- No IPC overhead
+- No polling
+- No locks (beyond git's internal locking)
+- Files are read once per phase boundary (~every 5-10 minutes)
+
+Terminal 2 operations are independent — queue, discuss, and status commands don't block terminal 1.
+
+## When to Use This Workflow
+
+Ideal for:
+
+- **Long-running auto mode sessions** — milestones that take 1+ hours
+- **Multi-milestone projects** — queue M002, M003 while M001 executes
+- **Architecture-heavy work** — discuss decisions while auto mode implements
+- **Team environments** — one person monitors, another steers
+
+Not needed for:
+
+- Short milestones (< 30 minutes)
+- Single-slice work
+- Prototyping
+
+## Commands Reference
+
+| Command | Terminal | What It Does |
+|---------|----------|-------------|
+| `/gsd auto` | 1 | Start autonomous mode |
+| `/gsd status` | 2 | Check progress |
+| `/gsd queue` | 2 | Plan future milestones |
+| `/gsd discuss` | 2 | Architectural decisions |
+| `/gsd stop` | 1 | Stop auto mode |
+| `Escape` | 1 | Pause auto mode |
+
+## Troubleshooting
+
+### Terminal 2 Changes Not Picked Up
+
+**Cause:** Current unit hasn't finished yet.
+
+**Solution:** Wait for the current task to complete (check `/gsd status`), then changes take effect at the next dispatch.
+
+### Git Conflicts in `.gsd/`
+
+**Cause:** Both terminals wrote to the same file simultaneously.
+
+**Solution:** Resolve conflicts manually, commit, then `/gsd auto` to resume.
+
+### Auto Mode Stopped Unexpectedly
+
+**Cause:** Hard timeout, budget ceiling, or stuck detection.
+
+**Solution:** Check terminal 1 output for the reason. Fix (adjust timeout, increase budget, inspect stuck unit), then `/gsd auto` to resume.
+
+## Related
+
+- [Auto Mode](/usage/auto-mode) — how autonomous execution works
+- [Step Mode](/usage/step-mode) — alternative to auto mode for manual control
+- [Commands Reference](/commands/gsd) — all `/gsd` commands
+- [State Files](/architecture/state-files) — `.gsd/` directory structure

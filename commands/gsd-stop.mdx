@@ -1,0 +1,308 @@
+---
+title: "/gsd stop"
+description: "Stop auto-mode execution and show final metrics"
+---
+
+## Overview
+
+The `/gsd stop` command stops GSD auto-mode execution. It's safe to call at any time — all progress is preserved in `.gsd/` files on disk.
+
+<Tip>
+  Stopping auto-mode is **non-destructive**. Resume with `/gsd auto` or `/gsd next` and it picks up where it left off.
+</Tip>
+
+## Basic Usage
+
+```bash
+# Stop auto-mode
+/gsd stop
+
+# Alternative: press Escape to pause (preserves more state)
+Escape
+```
+
+## What It Does
+
+1. **Clears timers** — cancels timeout watchdogs
+2. **Releases lock** — removes `.gsd/auto-lock.json`
+3. **Shows metrics** — displays final cost and token counts
+4. **Resets state** — clears in-memory tracking
+5. **Restores model** — switches back to your original model
+6. **Clears UI** — removes progress widget and status indicator
+
+## Output Example
+
+```bash
+/gsd stop
+
+Auto-mode stopped. Session: $1.47 · 234k tokens · 12 units
+```
+
+### Metrics Breakdown
+
+| Metric | Meaning |
+|--------|----------|
+| `$1.47` | Total cost for this auto-mode session |
+| `234k tokens` | Total tokens (input + output + cache) |
+| `12 units` | Number of work units completed |
+
+<Note>
+  These metrics only cover the **current auto-mode session**. For project-wide totals, check `.gsd/metrics.json` or run `/gsd status`.
+</Note>
+
+## Stop vs Pause
+
+### `/gsd stop` (Hard Stop)
+
+- **Clears all state** — unit dispatch counts, recovery tracking, completed units
+- **Resets metrics** — session cost/tokens cleared from memory
+- **Loses dashboard data** — elapsed time, completed units list
+- **Best for:** "I'm done for now" or "Something's wrong, abort"
+
+### Escape (Soft Pause)
+
+- **Preserves state** — unit tracking, metrics, dashboard data
+- **Keeps context** — conversation history intact
+- **Allows interaction** — you can ask questions, then resume
+- **Best for:** "Let me check something" or "Need to review before continuing"
+
+<CodeGroup>
+
+```bash Hard stop
+# Running auto-mode
+/gsd auto
+
+# Stop completely
+/gsd stop
+
+# Output:
+#   Auto-mode stopped. Session: $0.82 · 156k tokens · 8 units
+
+# Resume starts fresh (new session)
+/gsd auto
+```
+
+```bash Soft pause
+# Running auto-mode
+/gsd auto
+
+# Pause with Escape
+Escape
+
+# Output:
+#   Auto-mode paused (Escape). Type to interact, or /gsd auto to resume.
+
+# Ask a question
+What files did you modify in T03?
+
+# Resume with preserved context
+/gsd auto
+```
+
+</CodeGroup>
+
+## State Files Modified
+
+`/gsd stop` writes:
+
+- **`.gsd/metrics.json`** — final session metrics appended
+- **`.gsd/activity/{unit}.md`** — last unit's activity log saved
+
+It **removes**:
+
+- **`.gsd/auto-lock.json`** — crash recovery lock
+
+<Warning>
+  If you kill the process (Ctrl+C, `kill -9`, system crash) instead of using `/gsd stop`, the lock file persists. Next startup triggers crash recovery.
+</Warning>
+
+## When Auto-Mode Stops Itself
+
+Auto-mode stops automatically in these cases:
+
+### Milestone Complete
+
+```bash
+All slices complete in M001. Write milestone summary.
+# ...LLM writes M001-SUMMARY.md...
+Auto-mode stopped. Session: $3.21 · 487k tokens · 24 units
+```
+
+### All Milestones Complete
+
+```bash
+Milestone M003 complete. Advancing to M004.
+No pending milestones found.
+Auto-mode stopped. Session: $12.45 · 1.2M tokens · 67 units
+```
+
+### Blocked State
+
+```bash
+Blocked: No slice eligible — check dependency ordering.
+Auto-mode stopped.
+```
+
+### Budget Ceiling Hit
+
+```bash
+Budget ceiling $5.00 reached (spent $5.12). Pausing auto-mode.
+# (This is a pause, not a stop — resume with /gsd auto)
+```
+
+### Loop Detected
+
+```bash
+Loop detected: execute-task M001/S02/T03 dispatched 3 times total.
+Expected artifact not found: T03-SUMMARY.md
+Check branch state and .gsd/ artifacts.
+Auto-mode stopped.
+```
+
+### Merge Conflict
+
+```bash
+Slice merge failed — stopping auto-mode.
+Fix conflicts manually and restart.
+error: could not apply squash merge
+```
+
+<Tip>
+  Most errors stop auto-mode **gracefully** — you can inspect the issue, fix it manually, then resume with `/gsd auto`.
+</Tip>
+
+## Cleanup After Stop
+
+After stopping, auto-mode:
+
+1. **Commits dirty files** — any uncommitted changes on the current branch
+2. **Runs doctor** — fixes mechanical bookkeeping issues
+3. **Rebuilds STATE.md** — ensures state is consistent
+4. **Saves activity log** — writes `.gsd/activity/{unit}.md`
+5. **Snapshots metrics** — updates `.gsd/metrics.json`
+
+## Recovery Scenarios
+
+### Graceful Stop → Resume
+
+```bash
+# Stop cleanly
+/gsd stop
+
+# State on disk:
+#   - Last completed unit: T02-SUMMARY.md exists
+#   - Next unit: T03 (not started)
+#   - No lock file, no crash recovery needed
+
+# Resume
+/gsd auto
+# Starts at T03 (fresh session)
+```
+
+### Hard Crash → Resume
+
+```bash
+# Process killed mid-execution
+pkill -9 pi
+
+# State on disk:
+#   - Lock file: .gsd/auto-lock.json (unit=execute-task, id=T03)
+#   - Session file: contains 47 tool calls
+#   - T03-SUMMARY.md: does not exist yet
+
+# Resume
+/gsd auto
+
+# Output:
+#   Crash detected: execute-task M001/S02/T03 started 14:32:18
+#   Recovered 47 tool calls. Resuming with full context.
+```
+
+## Metrics Persistence
+
+The "Session: $X.XX · Yk tokens · Z units" summary is **ephemeral** — it only lives in the current auto-mode run. After stopping:
+
+- **Session metrics** are lost from memory
+- **Project metrics** persist in `.gsd/metrics.json`
+
+To see **all-time project totals**:
+
+```bash
+/gsd status
+# Dashboard shows cumulative cost across all sessions
+```
+
+## Examples
+
+<CodeGroup>
+
+```bash Normal workflow
+# Start auto-mode
+/gsd auto
+
+# Let it run for a while...
+# ...executes 8 units...
+
+# Stop when you want
+/gsd stop
+
+# Output:
+#   Auto-mode stopped. Session: $0.82 · 156k tokens · 8 units
+```
+
+```bash Pause to check something
+# Auto-mode running
+/gsd auto
+
+# Pause (Escape)
+Escape
+
+# Output:
+#   Auto-mode paused. Type to interact, or /gsd auto to resume.
+
+# Check files
+What files did you modify?
+
+# LLM responds with file list
+
+# Resume
+/gsd auto
+# Continues with preserved context
+```
+
+```bash Emergency stop
+# Something's wrong, abort immediately
+/gsd stop
+
+# Check state
+/gsd status
+
+# Fix issue manually (edit files, fix git, etc.)
+
+# Resume when ready
+/gsd auto
+```
+
+</CodeGroup>
+
+## Related Commands
+
+<CardGroup cols={2}>
+
+<Card title="/gsd auto" icon="play" href="/commands/gsd-auto">
+  Start autonomous execution
+</Card>
+
+<Card title="/gsd status" icon="chart-line" href="/commands/gsd-status">
+  View progress dashboard
+</Card>
+
+<Card title="/gsd" icon="wand-magic-sparkles" href="/commands/gsd">
+  Resume with guided wizard
+</Card>
+
+<Card title="/gsd next" icon="step-forward" href="/commands/gsd">
+  Resume in step mode
+</Card>
+
+</CardGroup>

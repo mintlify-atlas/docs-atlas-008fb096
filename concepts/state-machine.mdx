@@ -1,0 +1,469 @@
+---
+title: State Machine
+description: How GSD phases flow from Research → Plan → Execute → Complete → Reassess
+---
+
+## Overview
+
+GSD's auto mode is a **state machine driven by files on disk**. It reads `.gsd/STATE.md` (a cached view), determines the next unit of work, creates a fresh agent session, and dispatches.
+
+The flow for each slice:
+
+```
+Research → Plan → Execute (per task) → Complete → Reassess Roadmap → Next Slice
+```
+
+<Info>
+  State is **purely derived from disk**. `STATE.md` is just a cache — the real source of truth is `deriveState()` reading roadmaps, plans, and summaries.
+</Info>
+
+## Phase Definitions
+
+### `pre-planning`
+
+No roadmap exists yet. Need to research and plan the milestone.
+
+**Next action:**
+- If no `M00x-RESEARCH.md`: dispatch `research-milestone`
+- If research exists: dispatch `plan-milestone`
+
+**Transition to:** `planning` (when roadmap written)
+
+---
+
+### `planning`
+
+Active slice has no plan yet. Need to decompose into tasks.
+
+**Next action:**
+- If no `S0x-RESEARCH.md`: dispatch `research-slice` (skipped for S01 when milestone research exists)
+- If research exists: dispatch `plan-slice`
+
+**Transition to:** `executing` (when slice plan written)
+
+---
+
+### `executing`
+
+Slice plan exists, tasks remain. Execute the next incomplete task.
+
+**Next action:** dispatch `execute-task` for the first `[ ]` task in `S0x-PLAN.md`
+
+**Transition to:** `summarizing` (when all tasks `[x]`)
+
+---
+
+### `summarizing`
+
+All tasks complete, but slice not marked done in roadmap.
+
+**Next action:** dispatch `complete-slice` to write summary, UAT, and mark roadmap
+
+**Transition to:** `planning` or `executing` (next slice) after reassessment
+
+---
+
+### `replanning-slice`
+
+A completed task set `blocker_discovered: true` in its summary. Need to replan the slice before continuing.
+
+**Next action:** dispatch `replan-slice` to write `S0x-REPLAN.md` and adjust task list
+
+**Transition to:** `executing` (resume with adjusted plan)
+
+**Loop protection:** If `S0x-REPLAN.md` already exists, skip replanning and continue executing.
+
+```typescript
+if (blockerTaskId) {
+  const replanFile = resolveSliceFile(basePath, activeMilestone.id, activeSlice.id, "REPLAN");
+  if (!replanFile) {
+    return {
+      phase: 'replanning-slice',
+      blockers: [`Task ${blockerTaskId} discovered a blocker requiring slice replan`],
+    };
+  }
+  // REPLAN.md exists — loop protection: fall through to normal executing
+}
+```
+
+<Info>
+  From [`state.ts:410`](https://github.com/gsd-build/GSD-2/blob/main/src/resources/extensions/gsd/state.ts#L410) — prevents infinite replan loops.
+</Info>
+
+---
+
+### `completing-milestone`
+
+All slices marked `[x]` in roadmap, but no milestone summary exists.
+
+**Next action:** dispatch `complete-milestone` to write `M00x-SUMMARY.md`
+
+**Transition to:** `complete` or `pre-planning` (next milestone)
+
+---
+
+### `complete`
+
+All milestones complete. Nothing left to do.
+
+**Next action:** Stop auto mode.
+
+---
+
+### `blocked`
+
+No progress possible due to:
+- Unmet milestone dependencies (`depends_on: [M001]` but M001 incomplete)
+- Unmet slice dependencies (S03 `depends:[S01,S02]` but S01 incomplete)
+- Circular dependencies or corrupted state
+
+**Next action:** Fix dependencies manually, then restart auto mode.
+
+## The Core Loop
+
+From [`auto.ts:951`](https://github.com/gsd-build/GSD-2/blob/main/src/resources/extensions/gsd/auto.ts#L951):
+
+```typescript
+async function dispatchNextUnit(
+  ctx: ExtensionContext,
+  pi: ExtensionAPI,
+): Promise<void> {
+  if (!active || !cmdCtx) return;
+
+  let state = await deriveState(basePath);
+  let mid = state.activeMilestone?.id;
+
+  if (!mid) {
+    await stopAuto(ctx, pi);
+    return;
+  }
+
+  // Determine next unit based on phase
+  let unitType: string;
+  let unitId: string;
+  let prompt: string;
+
+  if (state.phase === 'complete') {
+    await stopAuto(ctx, pi);
+    return;
+  }
+
+  if (state.phase === 'blocked') {
+    await stopAuto(ctx, pi);
+    ctx.ui.notify(`Blocked: ${state.blockers.join(", ")}. Fix and run /gsd auto.`, "warning");
+    return;
+  }
+
+  if (state.phase === 'pre-planning') {
+    const hasResearch = !!(await loadFile(resolveMilestoneFile(basePath, mid, "RESEARCH")));
+    if (!hasResearch) {
+      unitType = "research-milestone";
+      unitId = mid;
+      prompt = await buildResearchMilestonePrompt(mid, midTitle!, basePath);
+    } else {
+      unitType = "plan-milestone";
+      unitId = mid;
+      prompt = await buildPlanMilestonePrompt(mid, midTitle!, basePath);
+    }
+  } else if (state.phase === 'planning') {
+    const sid = state.activeSlice!.id;
+    const hasResearch = !!(await loadFile(resolveSliceFile(basePath, mid, sid, "RESEARCH")));
+    if (!hasResearch) {
+      unitType = "research-slice";
+      unitId = `${mid}/${sid}`;
+      prompt = await buildResearchSlicePrompt(mid, midTitle!, sid, sTitle, basePath);
+    } else {
+      unitType = "plan-slice";
+      unitId = `${mid}/${sid}`;
+      prompt = await buildPlanSlicePrompt(mid, midTitle!, sid, sTitle, basePath);
+    }
+  } else if (state.phase === 'executing' && state.activeTask) {
+    const tid = state.activeTask.id;
+    unitType = "execute-task";
+    unitId = `${mid}/${sid}/${tid}`;
+    prompt = await buildExecuteTaskPrompt(mid, sid, sTitle, tid, tTitle, basePath);
+  } else if (state.phase === 'summarizing') {
+    unitType = "complete-slice";
+    unitId = `${mid}/${sid}`;
+    prompt = await buildCompleteSlicePrompt(mid, midTitle!, sid, sTitle, basePath);
+  } else if (state.phase === 'completing-milestone') {
+    unitType = "complete-milestone";
+    unitId = mid;
+    prompt = await buildCompleteMilestonePrompt(mid, midTitle!, basePath);
+  }
+
+  // Create fresh session and dispatch
+  await ctx.newSession();
+  await pi.sendMessage(prompt);
+}
+```
+
+<Warning>
+  This is **pseudocode** — the real implementation has crash recovery, timeout supervision, stuck detection, metrics capture, and more. See `auto.ts` for the full version.
+</Warning>
+
+## State Derivation
+
+From [`state.ts:98`](https://github.com/gsd-build/GSD-2/blob/main/src/resources/extensions/gsd/state.ts#L98):
+
+```typescript
+export async function deriveState(basePath: string): Promise<GSDState> {
+  const milestoneIds = findMilestoneIds(basePath);
+
+  if (milestoneIds.length === 0) {
+    return {
+      activeMilestone: null,
+      activeSlice: null,
+      activeTask: null,
+      phase: 'pre-planning',
+      nextAction: 'No milestones found. Run /gsd to create one.',
+    };
+  }
+
+  // Find first incomplete milestone
+  for (const mid of milestoneIds) {
+    const roadmapFile = resolveMilestoneFile(basePath, mid, "ROADMAP");
+    const content = roadmapFile ? await loadFile(roadmapFile) : null;
+    if (!content) {
+      // No roadmap — milestone is incomplete
+      return {
+        activeMilestone: { id: mid, title: mid },
+        activeSlice: null,
+        activeTask: null,
+        phase: 'pre-planning',
+        nextAction: `Plan milestone ${mid}.`,
+      };
+    }
+
+    const roadmap = parseRoadmap(content);
+    if (!isMilestoneComplete(roadmap)) {
+      // Milestone has roadmap but not all slices done
+      const activeSlice = roadmap.slices.find(s => !s.done);
+      if (!activeSlice) {
+        return { phase: 'blocked', blockers: ['No slice eligible'] };
+      }
+
+      // Check if slice has plan
+      const planFile = resolveSliceFile(basePath, mid, activeSlice.id, "PLAN");
+      const slicePlanContent = planFile ? await loadFile(planFile) : null;
+
+      if (!slicePlanContent) {
+        return {
+          activeMilestone: { id: mid, title: roadmap.title },
+          activeSlice: { id: activeSlice.id, title: activeSlice.title },
+          activeTask: null,
+          phase: 'planning',
+          nextAction: `Plan slice ${activeSlice.id}.`,
+        };
+      }
+
+      // Slice has plan — find next task
+      const slicePlan = parsePlan(slicePlanContent);
+      const activeTaskEntry = slicePlan.tasks.find(t => !t.done);
+
+      if (!activeTaskEntry) {
+        // All tasks done but slice not marked complete
+        return {
+          activeMilestone: { id: mid, title: roadmap.title },
+          activeSlice: { id: activeSlice.id, title: activeSlice.title },
+          activeTask: null,
+          phase: 'summarizing',
+          nextAction: `All tasks done in ${activeSlice.id}. Write slice summary.`,
+        };
+      }
+
+      return {
+        activeMilestone: { id: mid, title: roadmap.title },
+        activeSlice: { id: activeSlice.id, title: activeSlice.title },
+        activeTask: { id: activeTaskEntry.id, title: activeTaskEntry.title },
+        phase: 'executing',
+        nextAction: `Execute ${activeTaskEntry.id}: ${activeTaskEntry.title}.`,
+      };
+    }
+  }
+
+  // All milestones complete
+  return {
+    activeMilestone: null,
+    activeSlice: null,
+    activeTask: null,
+    phase: 'complete',
+    nextAction: 'All milestones complete.',
+  };
+}
+```
+
+<Note>
+  This function is **pure** — no side effects. It only reads from disk and returns a state object.
+</Note>
+
+## Reassessment
+
+After each slice completes, GSD runs **adaptive replanning**:
+
+1. Check if a reassessment file exists: `.gsd/milestones/M001/S01-REASSESSED.md`
+2. If not, dispatch `reassess-roadmap` unit
+3. LLM reads the completed slice summary and decides:
+   - **No changes needed** → write empty reassessment file to skip future checks
+   - **Reorder slices** → update `M001-ROADMAP.md` with new order
+   - **Add new slices** → append to roadmap
+   - **Remove obsolete slices** → mark `[x]` with note "obsoleted by S01"
+
+**Why this matters:**
+
+Work reveals new information. S01 might discover that S03 is no longer needed, or that a new S05 should be inserted. Reassessment keeps the roadmap aligned with reality.
+
+## Crash Recovery
+
+When auto mode starts, it checks for a crash lock:
+
+```typescript
+const crashLock = readCrashLock(base);
+if (crashLock) {
+  const activityDir = join(gsdRoot(base), "activity");
+  const recovery = synthesizeCrashRecovery(
+    base, crashLock.unitType, crashLock.unitId,
+    crashLock.sessionFile, activityDir,
+  );
+  if (recovery && recovery.trace.toolCallCount > 0) {
+    pendingCrashRecovery = recovery.prompt;
+    ctx.ui.notify(
+      `Recovered ${recovery.trace.toolCallCount} tool calls from crashed session. Resuming with full context.`,
+      "warning",
+    );
+  }
+  clearLock(base);
+}
+```
+
+The next dispatch prepends the recovery prompt:
+
+```typescript
+if (pendingCrashRecovery) {
+  prompt = pendingCrashRecovery + "\n\n---\n\n" + prompt;
+  pendingCrashRecovery = null;
+}
+```
+
+This gives the LLM full context of what happened before the crash, so it can resume mid-task.
+
+## Stuck Detection
+
+If the same unit dispatches 3+ times without producing its expected artifact:
+
+```typescript
+const dispatchKey = `${unitType}/${unitId}`;
+const prevCount = unitDispatchCount.get(dispatchKey) ?? 0;
+if (prevCount >= MAX_UNIT_DISPATCHES) {
+  const expected = diagnoseExpectedArtifact(unitType, unitId, basePath);
+  await stopAuto(ctx, pi);
+  ctx.ui.notify(
+    `Loop detected: ${unitType} ${unitId} dispatched ${prevCount + 1} times total. Expected artifact not found.${expected ? `\n   Expected: ${expected}` : ""}`,
+    "error",
+  );
+  return;
+}
+```
+
+This prevents infinite loops when the LLM fails to write the expected file.
+
+## Timeout Supervision
+
+Each unit has three timeout levels:
+
+1. **Soft timeout** (20 min default) — Warn the LLM to wrap up
+2. **Idle watchdog** (10 min default) — Detect stalls (no tool calls)
+3. **Hard timeout** (30 min default) — Pause auto mode
+
+```typescript
+function setupUnitTimeout(unitType: string, unitId: string, config: AutoSupervisorConfig): void {
+  const { soft_timeout_minutes, idle_timeout_minutes, hard_timeout_minutes } = config;
+
+  // Soft timeout: warn LLM to wrap up
+  wrapupWarningHandle = setTimeout(() => {
+    ctx.ui.notify(`${unitType} ${unitId} approaching timeout. Wrapping up...`, "warning");
+    writeUnitRuntimeRecord(basePath, unitType, unitId, currentUnit!.startedAt, {
+      phase: "wrapping_up",
+      wrapupWarningSent: true,
+    });
+  }, soft_timeout_minutes * 60 * 1000);
+
+  // Hard timeout: pause auto mode
+  unitTimeoutHandle = setTimeout(async () => {
+    await pauseAuto(ctx, pi);
+    ctx.ui.notify(`${unitType} ${unitId} timed out after ${hard_timeout_minutes}m. Paused.`, "error");
+  }, hard_timeout_minutes * 60 * 1000);
+
+  // Idle watchdog: detect stalls
+  idleWatchdogHandle = setInterval(() => {
+    const record = readUnitRuntimeRecord(basePath, unitType, unitId);
+    if (record && Date.now() - record.lastProgressAt > idle_timeout_minutes * 60 * 1000) {
+      pauseAuto(ctx, pi);
+      ctx.ui.notify(`${unitType} ${unitId} stalled (no progress for ${idle_timeout_minutes}m). Paused.`, "error");
+    }
+  }, 60 * 1000);
+}
+```
+
+## Step Mode
+
+Step mode uses the same state machine, but pauses between units with a wizard:
+
+```typescript
+async function showStepWizard(
+  ctx: ExtensionContext,
+  pi: ExtensionAPI,
+): Promise<void> {
+  const state = await deriveState(basePath);
+  const nextDesc = describeNextUnit(state);
+
+  const choice = await showNextAction(cmdCtx, {
+    title: `GSD — ${justFinished} complete`,
+    actions: [
+      { id: "continue", label: nextDesc.label, recommended: true },
+      { id: "auto", label: "Switch to auto" },
+      { id: "status", label: "View status" },
+    ],
+  });
+
+  if (choice === "continue") {
+    await dispatchNextUnit(ctx, pi);
+  } else if (choice === "auto") {
+    stepMode = false;
+    await dispatchNextUnit(ctx, pi);
+  }
+}
+```
+
+You can switch from step → auto mid-session via the wizard.
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Trust the state machine">
+    Don't manually edit checkboxes or skip phases. Let GSD drive the flow.
+  </Accordion>
+  
+  <Accordion title="Fix blockers promptly">
+    If phase is `blocked`, the state machine can't advance. Fix dependencies or corrupted files, then restart.
+  </Accordion>
+  
+  <Accordion title="Use step mode for exploration">
+    Run `/gsd next` to pause between units. Review output, adjust plans, then continue.
+  </Accordion>
+  
+  <Accordion title="Monitor the dashboard">
+    Press `Ctrl+Alt+G` or run `/gsd status` to see current phase, elapsed time, and cost.
+  </Accordion>
+</AccordionGroup>
+
+## Related Concepts
+
+<CardGroup cols={2}>
+  <Card title="Milestones, Slices, Tasks" icon="list-check" href="/concepts/milestones-slices-tasks">
+    The work hierarchy that drives phase transitions
+  </Card>
+  <Card title="Context Engineering" icon="brain" href="/concepts/context-engineering">
+    What gets inlined when each unit dispatches
+  </Card>
+</CardGroup>

@@ -1,0 +1,444 @@
+---
+title: "/gsd auto"
+description: "Run GSD autonomously — fresh session per unit, loops until milestone complete"
+---
+
+## Overview
+
+`/gsd auto` is GSD 2's autonomous execution mode. It reads the current state from `.gsd/` files, determines the next unit of work, creates a fresh LLM session, and dispatches a focused prompt. After each unit completes, it repeats — looping until the entire milestone is done.
+
+<Tip>
+  **Auto-mode is stateless** — all state lives in `.gsd/` files on disk. You can stop, restart, or even crash without losing progress.
+</Tip>
+
+## Basic Usage
+
+```bash
+# Start auto-mode (loops until milestone complete)
+/gsd auto
+
+# Start with verbose logging
+/gsd auto --verbose
+
+# Stop auto-mode
+/gsd stop
+
+# Pause by pressing Escape, then resume with:
+/gsd auto
+```
+
+## How It Works
+
+### Fresh Session Per Unit
+
+Each "unit of work" gets a **fresh LLM session** via `ctx.newSession()`:
+
+1. **Plan milestone** — research + write roadmap
+2. **Plan slice** — research + decompose into tasks
+3. **Execute task** — implement one feature/fix
+4. **Complete slice** — write summary, UAT, merge to main
+5. **Reassess roadmap** — check if adaptive replanning needed
+
+This architecture provides:
+
+- **Isolation** — task failures don't pollute future sessions
+- **Focus** — each prompt is laser-targeted to one objective
+- **Debugging** — activity logs captured per unit (`.gsd/activity/`)
+
+### State Machine Driven by Disk
+
+After each `agent_end` (LLM turn completes), auto-mode:
+
+1. Re-derives state by reading `.gsd/` files
+2. Determines next unit based on phase
+3. Creates fresh session
+4. Injects focused prompt
+5. Repeats
+
+<Note>
+  The state machine logic lives in `auto.ts:dispatchNextUnit()` (~600 lines). It handles all phase transitions, branch management, and artifact validation.
+</Note>
+
+## Progress Widget
+
+While auto-mode runs, a live progress widget shows:
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ● GSD  AUTO                            2m 34s
+
+  Add Stripe payment integration
+  S02: Webhook handler
+
+  ▸ executing  T03: Validate webhook signatures  EXECUTE
+
+  ████████████████░░░░░░░░  ·  2/3 slices  ·  task 3/5
+
+  → then continue S02
+
+  ~/projects/saas-app (gsd/M001/S02)
+  ↑45k ↓12k R8k W2k $0.234  67.2%/200k  claude-4.5-sonnet
+  esc pause  Ctrl+Alt+G dashboard
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+### Widget Breakdown
+
+| Element | Meaning |
+|---------|----------|
+| `● GSD AUTO` | Pulsing dot indicates active execution |
+| `2m 34s` | Time since auto-mode started |
+| Milestone title | Current milestone being executed |
+| Slice title | Current slice being worked on |
+| `▸ executing T03` | Current unit: verb + target |
+| `EXECUTE` | Phase badge |
+| Progress bar | Slices completed in roadmap |
+| `task 3/5` | Tasks completed in current slice |
+| `→ then continue S02` | What happens next |
+| `~/projects/...` | Working directory + git branch |
+| Token stats | Input↑ Output↓ CacheRead CacheWrite Cost |
+| `67.2%/200k` | Context window usage |
+| Model ID | Currently active model |
+
+<Tip>
+  Press **Escape** to pause auto-mode. Press **Ctrl+Alt+G** to open the dashboard overlay.
+</Tip>
+
+## Step Mode vs Auto Mode
+
+### Step Mode (`/gsd` or `/gsd next`)
+
+- Executes **one unit**, then pauses
+- Shows wizard after each unit: "Continue?" or "Switch to auto?"
+- Best for: exploratory work, high-risk changes, learning GSD
+
+### Auto Mode (`/gsd auto`)
+
+- Executes **continuously** until milestone complete
+- No pauses between units
+- Best for: well-planned milestones, repetitive tasks, large features
+
+<Warning>
+  Auto-mode will **loop through all pending milestones**. If you have M001, M002, M003 queued, it will execute all three back-to-back.
+</Warning>
+
+## State Files Modified
+
+Auto-mode writes extensively to `.gsd/` as it executes:
+
+<AccordionGroup>
+  <Accordion title="Planning phase">
+    - `M001-ROADMAP.md` — milestone roadmap with slices
+    - `M001-RESEARCH.md` — codebase scouting + external docs
+    - `S01-PLAN.md` — task breakdown with must-haves
+    - `S01-RESEARCH.md` — slice-level technical grounding
+  </Accordion>
+  
+  <Accordion title="Execution phase">
+    - Your codebase files — source, tests, config, etc.
+    - `T01-SUMMARY.md` — what was built, files touched, verification result
+    - `CONTINUE.md` — interrupt recovery state (if work spans multiple sessions)
+  </Accordion>
+  
+  <Accordion title="Completion phase">
+    - `S01-SUMMARY.md` — what the slice accomplished
+    - `S01-UAT.md` — user acceptance test instructions
+    - `S01-UAT-RESULT.md` — UAT execution outcome
+    - `M001-SUMMARY.md` — milestone summary (when all slices done)
+  </Accordion>
+  
+  <Accordion title="Metadata">
+    - `STATE.md` — derived state snapshot (auto-rebuilt)
+    - `.gsd/activity/*.md` — session activity logs per unit
+    - `.gsd/metrics.json` — cost and token tracking
+    - `.gsd/completed-units.json` — idempotency tracking
+  </Accordion>
+</AccordionGroup>
+
+## Git Branch Management
+
+Auto-mode uses **branch-per-slice** workflow:
+
+1. **Planning** happens on `main`
+2. **Execution** creates `gsd/M001/S01` branch
+3. **Tasks** commit incrementally on the slice branch
+4. **Completion** squash-merges slice branch → `main`
+
+This ensures:
+
+- Main branch only contains **complete, verified slices**
+- Work-in-progress is isolated
+- Easy rollback if a slice fails
+
+<CodeGroup>
+
+```bash Branch lifecycle
+# Before execution
+git branch
+* main
+
+# During S01 execution
+git branch
+  main
+* gsd/M001/S01
+
+# After S01 completes
+git branch
+* main  # slice merged and branch deleted
+
+# During S02 execution
+git branch
+  main
+* gsd/M001/S02
+```
+
+</CodeGroup>
+
+## Crash Recovery
+
+Auto-mode is **crash-resilient**. If the process dies:
+
+1. **Lock file** persists in `.gsd/auto-lock.json`
+2. **Session file** contains all tool calls up to crash
+3. **Runtime record** tracks unit start time and phase
+
+On restart, auto-mode:
+
+- Detects the lock file
+- Synthesizes a recovery prompt from the crashed session's tool calls
+- Resumes with full context
+
+```bash
+Crash detected:
+  Unit: execute-task M001/S02/T03
+  Started: 14:32:18
+  Recovered 47 tool calls from crashed session. Resuming with full context.
+```
+
+<Tip>
+  The recovery prompt includes: task description, files read, edits made, bash commands run, and the point of failure.
+</Tip>
+
+## Supervision & Timeouts
+
+Auto-mode includes **progress-aware timeouts** to detect stuck units:
+
+- **Wrapup warning** at 80% of budget — nudges LLM to finish
+- **Hard timeout** at 100% of budget — stops auto-mode
+- **Idle watchdog** — detects if LLM stops making progress
+
+Timeout budgets (configurable in `PREFERENCES.md`):
+
+| Unit Type | Default Budget |
+|-----------|----------------|
+| Research | 10 minutes |
+| Planning | 15 minutes |
+| Execute task | 30 minutes |
+| Complete slice | 10 minutes |
+
+<Warning>
+  Timeouts are **not wall-clock time** — they're based on LLM activity. If the agent is waiting for a long-running bash command, that doesn't count against the budget.
+</Warning>
+
+## Model Selection
+
+Auto-mode can use **different models per unit type** via preferences:
+
+```yaml PREFERENCES.md
+auto_supervisor:
+  default_model: claude-4.5-sonnet
+  
+  # Override model for specific unit types
+  models:
+    research-milestone: claude-opus-4-20250514
+    execute-task: claude-4.5-sonnet
+    plan-slice: claude-haiku-4-20250409
+```
+
+This allows:
+
+- **Opus for research** — deep codebase exploration
+- **Sonnet for execution** — balanced cost/quality
+- **Haiku for planning** — fast, structured output
+
+## Budget Ceiling
+
+Set a **cost limit** to prevent runaway spending:
+
+```yaml PREFERENCES.md
+budget_ceiling: 5.00  # dollars
+```
+
+When the ceiling is hit:
+
+- Auto-mode pauses before starting the next unit
+- Shows notification: "Budget ceiling $5.00 reached (spent $5.12). Pausing."
+- Resume with `/gsd auto` to continue (acknowledges overage)
+
+## Metrics & Cost Tracking
+
+Auto-mode tracks costs in `.gsd/metrics.json`:
+
+```json
+{
+  "projectRoot": "/Users/you/project",
+  "units": [
+    {
+      "unitType": "execute-task",
+      "unitId": "M001/S01/T03",
+      "modelId": "claude-4.5-sonnet",
+      "startedAt": "2026-03-13T14:32:18.123Z",
+      "finishedAt": "2026-03-13T14:38:42.456Z",
+      "tokens": {
+        "input": 45234,
+        "output": 12100,
+        "cacheRead": 8000,
+        "cacheWrite": 2000,
+        "total": 67334
+      },
+      "cost": 0.234
+    }
+  ]
+}
+```
+
+View totals with `/gsd status` or when stopping auto-mode:
+
+```
+Auto-mode stopped. Session: $1.47 · 234k tokens · 12 units
+```
+
+## Idempotency
+
+Auto-mode tracks **completed units** in `.gsd/completed-units.json`:
+
+```json
+[
+  "plan-milestone/M001",
+  "plan-slice/M001/S01",
+  "execute-task/M001/S01/T01",
+  "execute-task/M001/S01/T02"
+]
+```
+
+If auto-mode crashes and restarts:
+
+- Skips units in the completed set (if artifacts exist)
+- Prevents re-running already-complete work
+- Cross-validates: "Key says complete, but artifact missing? Re-run."
+
+<Note>
+  Idempotency keys are **per-project** and survive restarts. The file is cleared when a milestone completes.
+</Note>
+
+## Doctor Post-Hook
+
+After **every unit** completes, auto-mode runs `gsd doctor --fix` scoped to the current slice:
+
+- Marks checkboxes the LLM forgot
+- Writes stub summaries for completed tasks
+- Rebuilds `STATE.md` from disk
+
+This makes auto-mode **self-healing** — mechanical bookkeeping errors get fixed automatically.
+
+## Adaptive Replanning
+
+If a task discovers a **blocker** (e.g., "Need to refactor auth first"), it sets `blocker_discovered: true` in its summary. Auto-mode detects this and:
+
+1. Pauses execution
+2. Dispatches a `replan-slice` unit
+3. LLM analyzes the blocker and rewrites the slice plan
+4. Execution resumes with the new plan
+
+<Tip>
+  Replanning is **automatic** — the LLM decides when a blocker requires replanning vs. just fixing it inline.
+</Tip>
+
+## When to Use
+
+### Use `/gsd auto` when:
+
+- **Roadmap is solid** — you've reviewed the plan and it looks good
+- **Large milestone** — 5+ slices, don't want to manually confirm each
+- **Repetitive work** — migrations, refactors, test coverage
+- **High confidence** — you trust the LLM to execute without supervision
+
+### Use step mode when:
+
+- **Exploratory work** — unclear what the right approach is
+- **High-risk changes** — database migrations, auth changes
+- **Learning GSD** — want to see each step before proceeding
+- **Debugging issues** — need to inspect state between units
+
+## Examples
+
+<CodeGroup>
+
+```bash Full milestone execution
+# Plan a milestone
+/gsd
+# Answer: "Add Stripe payments"
+# LLM writes CONTEXT.md and ROADMAP.md (3 slices)
+
+# Execute everything
+/gsd auto
+
+# Auto-mode runs:
+#   plan-slice S01 → execute T01-T04 → complete S01 → merge
+#   plan-slice S02 → execute T01-T03 → complete S02 → merge
+#   plan-slice S03 → execute T01-T02 → complete S03 → merge
+#   complete-milestone M001
+# 
+# Result: M001-SUMMARY.md written, all slices merged to main
+```
+
+```bash Resume after crash
+# Process killed mid-execution
+pkill -9 pi
+
+# Restart auto-mode
+/gsd auto
+
+# Output:
+#   Crash detected: execute-task M001/S02/T03 started 14:32:18
+#   Recovered 47 tool calls. Resuming with full context.
+#   
+#   Auto-mode started. Will loop until milestone complete.
+```
+
+```bash Budget ceiling
+# Set budget in PREFERENCES.md
+budget_ceiling: 2.00
+
+/gsd auto
+
+# After spending $2.12:
+#   Budget ceiling $2.00 reached (spent $2.12). Pausing.
+#   
+# Review .gsd/metrics.json, then resume:
+/gsd auto
+```
+
+</CodeGroup>
+
+## Related Commands
+
+<CardGroup cols={2}>
+
+<Card title="/gsd" icon="wand-magic-sparkles" href="/commands/gsd">
+  Context-aware wizard for guided execution
+</Card>
+
+<Card title="/gsd stop" icon="stop" href="/commands/gsd-stop">
+  Stop auto-mode
+</Card>
+
+<Card title="/gsd status" icon="chart-line" href="/commands/gsd-status">
+  View progress dashboard
+</Card>
+
+<Card title="/gsd next" icon="step-forward" href="/commands/gsd">
+  Execute one step, then pause
+</Card>
+
+</CardGroup>

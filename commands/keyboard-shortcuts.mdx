@@ -1,0 +1,351 @@
+---
+title: "Keyboard Shortcuts"
+description: "Essential keyboard shortcuts for GSD 2"
+---
+
+## Overview
+
+GSD 2 provides keyboard shortcuts for common operations. Shortcuts use the `Ctrl+Alt` modifier to avoid conflicts with system and terminal keybindings.
+
+## Global Shortcuts
+
+These shortcuts work throughout the GSD interface:
+
+### Dashboard
+
+<ParamField path="Ctrl+Alt+G" type="keyboard">
+  Opens the GSD dashboard overlay showing project status, milestones, slices, and recent activity.
+  
+  **Equivalent to:** `/gsd status`
+</ParamField>
+
+**Behavior:**
+- Shows full-screen dashboard overlay
+- Displays milestone registry, active slice, phase, requirements, blockers, next action
+- Press `Escape` or `q` to close
+
+**Example:**
+```
+Press: Ctrl+Alt+G
+
+┌─────────────────────── GSD Dashboard ───────────────────────┐
+│                                                              │
+│  Active Milestone: M002 — Database Layer                     │
+│  Active Slice: S03 — Query Builder                           │
+│  Phase: executing                                            │
+│                                                              │
+│  Milestone Registry:                                         │
+│    ✅ M001: Foundation Setup                                 │
+│    🔄 M002: Database Layer                                   │
+│    ⬜ M003: API Endpoints                                     │
+│                                                              │
+│  Recent Decisions:                                           │
+│    - Use PostgreSQL for primary datastore                    │
+│    - Implement query builder before ORM                      │
+│                                                              │
+│  Next Action:                                                │
+│    Execute T05: Implement WHERE clause builder               │
+│                                                              │
+│  [Press Escape to close]                                     │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### Voice Mode
+
+<ParamField path="Ctrl+Alt+V" type="keyboard">
+  Toggles voice input mode for hands-free speech-to-text interaction.
+  
+  **Equivalent to:** `/voice`
+  
+  **Platform:** macOS only
+</ParamField>
+
+**Behavior:**
+- Activates microphone and speech recognition
+- Transcribes spoken input into chat editor
+- Footer shows flashing `● transcribing` indicator
+- Press `Enter` to send or `Escape` to cancel
+
+**Example:**
+```
+Press: Ctrl+Alt+V
+[Footer shows: ● transcribing]
+
+Speak: "Run GSD auto mode"
+[Text appears in editor: "Run GSD auto mode"]
+
+Press: Enter
+[Message sent to agent]
+```
+
+### Background Processes
+
+<ParamField path="Ctrl+Alt+B" type="keyboard">
+  Opens the interactive background process manager overlay.
+  
+  **Equivalent to:** `/bg`
+</ParamField>
+
+**Behavior:**
+- Shows all running `bg_shell` processes
+- Displays status, uptime, ports, error counts
+- Use arrow keys to select, `k` to kill, `r` to restart, `o` to view output
+
+**Example:**
+```
+Press: Ctrl+Alt+B
+
+┌─────────────────── Background Processes ────────────────────┐
+│                                                              │
+│  ✓ a1b2c3d4  dev-server [server] ready :3000                │
+│    uptime: 15m 42s | 0 errors                               │
+│                                                              │
+│  ⋯ e5f6g7h8  build-watch [watcher] starting                 │
+│    uptime: 3s | 0 errors                                     │
+│                                                              │
+│  [k] kill  [r] restart  [o] output  [Esc] close             │
+└──────────────────────────────────────────────────────────────┘
+```
+
+## Editor Shortcuts
+
+These shortcuts work in the chat input editor:
+
+### Send Message
+
+<ParamField path="Enter" type="keyboard">
+  Sends the current message to the agent (when not in multi-line mode).
+</ParamField>
+
+<ParamField path="Ctrl+Enter" type="keyboard">
+  Sends the current message in multi-line mode.
+</ParamField>
+
+### Cancel/Abort
+
+<ParamField path="Escape" type="keyboard">
+  Aborts the current agent turn or closes overlays.
+  
+  **Context-dependent behavior:**
+  - **During agent response:** Stops generation, pauses auto-mode
+  - **In overlay:** Closes the overlay (dashboard, bg processes, etc.)
+  - **In voice mode:** Cancels and exits voice mode
+</ParamField>
+
+**Example: Abort Agent Turn**
+```
+Agent is generating...
+
+Press: Escape
+
+[Agent stops]
+[Auto-mode pauses if active]
+```
+
+### Clear Input
+
+<ParamField path="Ctrl+U" type="keyboard">
+  Clears the current input line.
+</ParamField>
+
+### History Navigation
+
+<ParamField path="Up Arrow" type="keyboard">
+  Recalls previous command from history.
+</ParamField>
+
+<ParamField path="Down Arrow" type="keyboard">
+  Moves forward in command history.
+</ParamField>
+
+## Process Control
+
+### Graceful Shutdown
+
+<ParamField path="Ctrl+C" type="keyboard">
+  Initiates graceful shutdown with cleanup.
+  
+  **Behavior:**
+  - Triggers `session_shutdown` event
+  - Saves auto-mode activity log (if active)
+  - Updates background process manifest
+  - Cleans up resources
+  - Exits with code 0
+</ParamField>
+
+**Example:**
+```
+Press: Ctrl+C
+
+[Saving activity log...]
+[Cleaning up...]
+[Exit]
+```
+
+<Note>
+Always prefer `Ctrl+C` over `/exit` when you have background processes or are in auto-mode. It ensures proper cleanup.
+</Note>
+
+## Overlay Navigation
+
+When an overlay is open (dashboard, bg processes, etc.):
+
+<ParamField path="Escape" type="keyboard">
+  Closes the overlay and returns to chat.
+</ParamField>
+
+<ParamField path="q" type="keyboard">
+  Closes the overlay (alternative to Escape).
+</ParamField>
+
+<ParamField path="Up/Down Arrows" type="keyboard">
+  Navigate items in interactive overlays (like background process list).
+</ParamField>
+
+<ParamField path="Enter" type="keyboard">
+  Selects/activates the highlighted item.
+</ParamField>
+
+## Background Process Manager (Ctrl+Alt+B)
+
+When the background process overlay is open:
+
+<ParamField path="k" type="keyboard">
+  Kills the selected process.
+</ParamField>
+
+<ParamField path="r" type="keyboard">
+  Restarts the selected process (kill + relaunch with same config).
+</ParamField>
+
+<ParamField path="o" type="keyboard">
+  Opens the output viewer for the selected process.
+</ParamField>
+
+<ParamField path="d" type="keyboard">
+  Shows digest (structured summary) for the selected process.
+</ParamField>
+
+<ParamField path="h" type="keyboard">
+  Shows highlights (significant output lines only).
+</ParamField>
+
+## Voice Mode Shortcuts
+
+When voice mode is active:
+
+<ParamField path="Enter" type="keyboard">
+  Sends the transcribed message and exits voice mode.
+</ParamField>
+
+<ParamField path="Escape" type="keyboard">
+  Cancels transcription and exits voice mode without sending.
+</ParamField>
+
+## Auto-Mode Shortcuts
+
+During auto-mode execution:
+
+<ParamField path="Escape" type="keyboard">
+  Pauses auto-mode after the current turn completes.
+  
+  **Behavior:**
+  - Agent finishes current response
+  - Auto-mode pauses (doesn't exit GSD)
+  - Conversation history preserved
+  - Resume with `/gsd auto`
+</ParamField>
+
+**Example:**
+```
+Auto-mode running...
+[Agent is executing task T03...]
+
+Press: Escape
+
+[Agent completes T03]
+[Auto-mode paused]
+
+Auto-mode paused. Resume with /gsd auto or inspect state with /gsd status.
+```
+
+## Shortcut Reference Table
+
+| Shortcut | Context | Action |
+|----------|---------|--------|
+| `Ctrl+Alt+G` | Global | Open GSD dashboard |
+| `Ctrl+Alt+V` | Global | Toggle voice mode (macOS) |
+| `Ctrl+Alt+B` | Global | Open background process manager |
+| `Enter` | Editor | Send message |
+| `Ctrl+Enter` | Editor (multi-line) | Send message |
+| `Escape` | Agent running | Abort turn, pause auto-mode |
+| `Escape` | Overlay | Close overlay |
+| `Escape` | Voice mode | Cancel and exit |
+| `Ctrl+C` | Global | Graceful shutdown |
+| `Ctrl+U` | Editor | Clear input |
+| `Up/Down` | Editor | Navigate history |
+| `Up/Down` | Overlay | Navigate items |
+| `k` | Process manager | Kill process |
+| `r` | Process manager | Restart process |
+| `o` | Process manager | View output |
+| `d` | Process manager | Show digest |
+| `h` | Process manager | Show highlights |
+| `q` | Overlay | Close overlay |
+
+## Custom Shortcuts
+
+GSD's shortcut system is extensible. Future versions may support user-defined shortcuts via preferences.
+
+## Platform Differences
+
+### macOS
+
+- All shortcuts work as documented
+- Voice mode fully supported
+- Terminal keybindings may conflict (check Terminal.app preferences)
+
+### Linux
+
+- All shortcuts except voice mode supported
+- Some terminals may intercept `Ctrl+Alt` combinations
+- If conflicts occur, use command equivalents (`/gsd status`, `/voice`, `/bg`)
+
+### Windows
+
+- All shortcuts except voice mode supported
+- Windows Terminal may intercept some `Ctrl+Alt` combinations
+- Configure Windows Terminal keybindings if needed
+
+## Conflict Resolution
+
+If a shortcut doesn't work:
+
+1. **Check terminal keybindings**: Your terminal may intercept the shortcut
+2. **Use command alternative**: All shortcuts have command equivalents
+3. **Reconfigure terminal**: Disable conflicting keybindings
+
+**Examples:**
+
+- `Ctrl+Alt+G` not working? Use `/gsd status`
+- `Ctrl+Alt+V` not working? Use `/voice`
+- `Ctrl+Alt+B` not working? Use `/bg`
+
+## Accessibility
+
+All shortcut functions are available via commands:
+
+- **Dashboard**: `/gsd status`
+- **Voice mode**: `/voice`
+- **Background processes**: `/bg`
+- **Abort**: Type `/gsd stop` (for auto-mode)
+- **Exit**: `/exit` or `Ctrl+C`
+
+<Tip>
+If you primarily use voice mode, you can say "open dashboard" or "show background processes" instead of using shortcuts.
+</Tip>
+
+## Related Commands
+
+- [/gsd status](/commands/gsd-status) - Dashboard (Ctrl+Alt+G)
+- [/voice](/commands/voice) - Voice mode (Ctrl+Alt+V)
+- [/exit](/commands/exit) - Exit GSD

@@ -1,0 +1,416 @@
+---
+title: 'Skill Discovery'
+description: 'Control how GSD finds and applies skills during auto mode'
+icon: 'wand-magic-sparkles'
+---
+
+GSD's **skill discovery** system automatically detects relevant skills during the research phase and applies them throughout the milestone. You control how aggressive this discovery process is.
+
+## What is Skill Discovery?
+
+During the research phase of each milestone and slice, GSD:
+
+1. **Scans the codebase** — Identifies frameworks, libraries, and patterns in use
+2. **Matches skills** — Finds skills in `~/.gsd/agent/skills/` that are relevant
+3. **Applies skills** — Loads skill instructions into the agent's context
+
+This means if you're working on a Next.js app with Clerk auth, GSD automatically loads:
+- `nextjs` skill for framework conventions
+- `clerk` skill for authentication patterns
+- `clerk-setup` skill for initial configuration
+
+## Discovery Modes
+
+Configure discovery mode in your preferences:
+
+```yaml
+---
+version: 1
+skill_discovery: suggest  # auto | suggest | off
+---
+```
+
+<ParamField path="skill_discovery" type="enum" default="suggest">
+  Controls how GSD discovers and applies skills during auto mode.
+  
+  <Expandable title="Discovery Modes">
+    <ResponseField name="auto" type="string">
+      **Aggressive** — Skills are found and applied automatically without prompting.
+      
+      **Behavior:**
+      - Research phase identifies relevant skills
+      - Skills are downloaded (if not already installed)
+      - Skills are loaded into the agent's context immediately
+      - No user confirmation required
+      
+      **Use when:**
+      - You trust the skill ecosystem
+      - You want maximum automation
+      - You're working in a well-supported domain (e.g., web apps with standard frameworks)
+      
+      **Example:**
+      ```yaml
+      skill_discovery: auto
+      ```
+    </ResponseField>
+    
+    <ResponseField name="suggest" type="string">
+      **Balanced (default)** — Skills are identified during research but not installed automatically.
+      
+      **Behavior:**
+      - Research phase identifies relevant skills
+      - Skills are listed in research output (e.g., `M001-RESEARCH.md`)
+      - User manually installs skills if desired: `npx skills add <skill-name>`
+      - Skills are loaded if already installed
+      
+      **Use when:**
+      - You want visibility into what skills would be used
+      - You prefer manual control over skill installation
+      - You're working in a mixed or unfamiliar domain
+      
+      **Example:**
+      ```yaml
+      skill_discovery: suggest
+      ```
+    </ResponseField>
+    
+    <ResponseField name="off" type="string">
+      **Disabled** — Skill discovery is turned off entirely.
+      
+      **Behavior:**
+      - Research phase does not scan for skills
+      - Only skills explicitly listed in `always_use_skills` are loaded
+      - No automatic or suggested skills
+      
+      **Use when:**
+      - You have a specific set of skills you always use (via `always_use_skills`)
+      - You want zero automatic skill behavior
+      - You're working in a custom or internal-only environment
+      
+      **Example:**
+      ```yaml
+      skill_discovery: off
+      always_use_skills:
+        - my-custom-skill
+      ```
+    </ResponseField>
+  </Expandable>
+</ParamField>
+
+## How Skills Are Resolved
+
+GSD resolves skill references in this order:
+
+1. **Absolute path to file** — `/Users/you/.gsd/agent/skills/custom/SKILL.md`
+2. **Absolute path to directory** — `/Users/you/.gsd/agent/skills/custom/` (looks for `SKILL.md` inside)
+3. **Bare name** — `clerk` (scans known skill directories)
+
+### Known Skill Directories
+
+Skills are searched in priority order:
+
+<Steps>
+  <Step title="User Skills">
+    `~/.gsd/agent/skills/`
+    
+    Highest priority — your personal skills
+  </Step>
+  <Step title="Project Skills">
+    `.pi/agent/skills/`
+    
+    Project-specific skills (checked into repo)
+  </Step>
+</Steps>
+
+**User skills override project skills** if both exist with the same name.
+
+## Skill Preferences
+
+Combine `skill_discovery` with explicit skill preferences for fine-grained control:
+
+```yaml
+---
+version: 1
+skill_discovery: suggest
+always_use_skills:
+  - verify-uat
+  - commit-ignore
+prefer_skills:
+  - find-skills
+avoid_skills:
+  - experimental-skill
+skill_rules:
+  - when: task involves Clerk authentication
+    use:
+      - clerk
+      - clerk-setup
+  - when: finishing implementation and human judgment matters
+    prefer:
+      - verify-uat
+---
+```
+
+### Skill Lists
+
+<Accordion title="always_use_skills">
+  Skills GSD should **always load** when relevant, regardless of discovery mode.
+  
+  **Use case:** You have a standard verification or commit cleanup skill you want applied to every project.
+  
+  ```yaml
+  always_use_skills:
+    - verify-uat
+    - /Users/you/.gsd/agent/skills/custom-lint
+  ```
+  
+  <Note>
+    `always_use_skills` works even when `skill_discovery: off`.
+  </Note>
+</Accordion>
+
+<Accordion title="prefer_skills">
+  Skills GSD should **prefer** when relevant but not force.
+  
+  **Use case:** Soft defaults that the agent can override if the context doesn't fit.
+  
+  ```yaml
+  prefer_skills:
+    - commit-ignore   # Prefer cleaning up .gitignore
+    - find-skills     # Suggest skill search when stuck
+  ```
+</Accordion>
+
+<Accordion title="avoid_skills">
+  Skills GSD should **avoid** unless clearly needed.
+  
+  **Use case:** Skills that are experimental, too aggressive, or not yet stable.
+  
+  ```yaml
+  avoid_skills:
+    - experimental-refactor
+    - legacy-migration
+  ```
+</Accordion>
+
+### Skill Rules
+
+<Accordion title="Situational Routing">
+  Use `skill_rules` for **context-dependent skill selection**.
+  
+  **Structure:**
+  ```yaml
+  skill_rules:
+    - when: <human-readable condition>
+      use: [<skill-names>]       # Always use when condition matches
+      prefer: [<skill-names>]    # Prefer when condition matches
+      avoid: [<skill-names>]     # Avoid when condition matches
+  ```
+  
+  **Examples:**
+  ```yaml
+  skill_rules:
+    - when: task involves Clerk authentication
+      use:
+        - clerk
+        - clerk-setup
+    
+    - when: finishing implementation and human judgment matters
+      prefer:
+        - verify-uat
+    
+    - when: working in legacy codebase
+      avoid:
+        - aggressive-refactor
+  ```
+  
+  <Note>
+    The `when` field is human-readable and interpreted by the LLM. Be specific but natural.
+  </Note>
+</Accordion>
+
+## Discovery Examples
+
+<CodeGroup>
+
+```yaml Full Auto (Trust Skills)
+---
+version: 1
+skill_discovery: auto  # Download and apply automatically
+---
+```
+
+```yaml Manual Control (Default)
+---
+version: 1
+skill_discovery: suggest  # Suggest but don't install
+always_use_skills:
+  - verify-uat  # Always load this one
+---
+```
+
+```yaml Explicit Only (No Discovery)
+---
+version: 1
+skill_discovery: off  # No automatic discovery
+always_use_skills:
+  - my-custom-skill
+  - /Users/you/.gsd/agent/skills/internal/SKILL.md
+---
+```
+
+```yaml Context-Aware Routing
+---
+version: 1
+skill_discovery: suggest
+always_use_skills:
+  - commit-ignore
+skill_rules:
+  - when: task involves Clerk authentication
+    use:
+      - clerk
+      - clerk-setup
+  - when: task involves Next.js App Router
+    use:
+      - nextjs
+  - when: finishing implementation
+    prefer:
+      - verify-uat
+---
+```
+
+</CodeGroup>
+
+## Checking Active Skills
+
+See which skills are loaded and active:
+
+```bash
+gsd
+/gsd status
+```
+
+The status command shows:
+- **Active skills** — Skills currently loaded in context
+- **Suggested skills** — Skills identified during research (if `skill_discovery: suggest`)
+- **Resolution warnings** — Skills referenced but not found
+
+Alternatively, check the research file:
+
+<CodeGroup>
+
+```bash Milestone Research
+cat .gsd/M001-RESEARCH.md
+```
+
+```bash Slice Research
+cat .gsd/slices/S01/research.md
+```
+
+</CodeGroup>
+
+Research files include a **Skills** section listing discovered skills and their relevance.
+
+## Installing Skills Manually
+
+When `skill_discovery: suggest`, GSD identifies skills but doesn't install them. Install manually:
+
+```bash
+npx skills add clerk
+npx skills add nextjs
+npx skills add https://example.com/custom-skill
+```
+
+Skills are installed to `~/.gsd/agent/skills/` and available to all projects.
+
+See available skills:
+
+```bash
+npx skills list
+```
+
+## Skill Resolution Warnings
+
+If a skill reference can't be resolved, GSD logs a warning:
+
+```yaml
+---
+always_use_skills:
+  - nonexistent-skill  # ⚠ not found
+---
+```
+
+**Warnings appear in:**
+- `.gsd/STATE.md` — State file with validation errors
+- `/gsd status` output — Shows unresolved skill references
+- Research files — Marks skills that couldn't be loaded
+
+**Fix by:**
+1. Installing the skill: `npx skills add nonexistent-skill`
+2. Checking the name: Typos in `preferences.md`
+3. Using an absolute path: `/Users/you/.gsd/agent/skills/custom/SKILL.md`
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Start with suggest" icon="lightbulb">
+    Use `skill_discovery: suggest` to see what skills would be applied before committing to auto.
+  </Card>
+  <Card title="Curate always_use_skills" icon="list-check">
+    Keep `always_use_skills` short — only skills you **always** want, not situational ones.
+  </Card>
+  <Card title="Use skill_rules for routing" icon="route">
+    Use `skill_rules` for framework-specific or situational skills instead of `always_use_skills`.
+  </Card>
+  <Card title="Test in step mode first" icon="shoe-prints">
+    Run `/gsd` (step mode) with `skill_discovery: auto` on a small slice to verify behavior before `/gsd auto`.
+  </Card>
+</CardGroup>
+
+## Advanced: Custom Skill Discovery
+
+You can create custom skills that include discovery logic:
+
+1. **Create a skill** in `~/.gsd/agent/skills/my-skill/SKILL.md`
+2. **Include detection logic** in the skill's frontmatter or instructions
+3. **Reference in preferences**:
+
+```yaml
+always_use_skills:
+  - my-skill
+```
+
+Skills can include their own `when` conditions and detection heuristics.
+
+## Disabling Specific Skills Temporarily
+
+If a discovered skill causes issues, add it to `avoid_skills`:
+
+```yaml
+---
+version: 1
+skill_discovery: auto
+avoid_skills:
+  - problematic-skill  # Temporarily disable
+---
+```
+
+This prevents the skill from being loaded even if discovery finds it.
+
+## Debugging Skill Discovery
+
+If skills aren't loading as expected:
+
+1. **Check discovery mode** — Verify `skill_discovery` in preferences
+2. **Check research output** — Read `M001-RESEARCH.md` for discovered skills
+3. **Check skill resolution** — Run `/gsd status` to see resolution warnings
+4. **Check skill installation** — Verify skill exists: `ls ~/.gsd/agent/skills/`
+5. **Check skill rules** — Ensure `when` conditions match your task context
+
+Full validation:
+
+```bash
+cat .gsd/preferences.md  # Check config
+cat .gsd/M001-RESEARCH.md  # Check discovery
+gsd  # Launch
+/gsd status  # Check active skills
+```

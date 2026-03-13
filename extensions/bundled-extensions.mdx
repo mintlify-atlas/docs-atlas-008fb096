@@ -1,0 +1,280 @@
+---
+title: "Bundled Extensions"
+description: "All 13 extensions that ship with GSD 2"
+icon: "boxes-stacked"
+---
+
+GSD 2 ships with 13 production-ready extensions, all loaded automatically. No configuration required.
+
+## Core Extensions
+
+### GSD — Workflow Engine
+
+The heart of GSD. Provides:
+
+- **Auto mode** — Autonomous milestone execution
+- **State machine** — Reads `.gsd/STATE.md`, dispatches next unit
+- **Commands** — `/gsd`, `/gsd auto`, `/gsd status`, `/gsd queue`, etc.
+- **Dashboard** — Real-time overlay showing progress, cost, token usage
+- **Git strategy** — Branch-per-slice with squash merge
+- **Crash recovery** — Lock files + session forensics
+- **Cost tracking** — Per-unit token/cost ledger with projections
+
+<Tip>
+The GSD extension is the only extension that's required. All others are optional enhancements.
+</Tip>
+
+**Key files:**
+- `auto.ts` — Auto mode state machine
+- `commands.ts` — `/gsd` command wizard
+- `dashboard-overlay.ts` — Real-time dashboard (Ctrl+Alt+G)
+- `crash-recovery.ts` — Session forensics and recovery
+- `metrics.ts` — Token/cost tracking
+- `git-service.ts` — Branch management and squash merge
+
+**Environment variables:** None (all configuration via `.gsd/preferences.md`)
+
+---
+
+## Web Access Extensions
+
+### Search the Web — Brave/Tavily/Jina
+
+Provides three tools for web research:
+
+- **`search-the-web`** — Rich web search with snippets, freshness filtering, domain scoping
+- **`fetch_page`** — Extract clean markdown from any URL via Jina Reader
+- **`search_and_read`** — Single-call search + content extraction via Brave LLM Context API
+
+**V4 improvement:** Native Anthropic web search
+- When using an Anthropic provider, injects `web_search_20250305` server-side tool
+- No BRAVE_API_KEY required when using Anthropic models ($0.01/search, billed through Anthropic)
+- Custom Brave tools disabled when Anthropic + no BRAVE_API_KEY
+
+**Environment variables:**
+- `BRAVE_API_KEY` — Optional with Anthropic models, required for non-Anthropic providers
+- `JINA_API_KEY` — Optional (higher rate limits for page extraction)
+
+[Learn more →](/extensions/search-tools)
+
+---
+
+### Google Search — Gemini-powered
+
+Provides `google_search` tool via Gemini's Google Search grounding:
+
+- Returns AI-synthesized answer grounded in Google Search results
+- Includes source URLs from grounding metadata
+- Uses existing `GEMINI_API_KEY` and Google Cloud GenAI credits
+- Alternative to Brave-based search for users with Google Cloud credits
+
+**Environment variables:**
+- `GEMINI_API_KEY` — Required
+- `GEMINI_SEARCH_MODEL` — Optional (default: `gemini-2.5-flash`)
+
+---
+
+### Context7 — Library Documentation
+
+Provides two tools for accessing up-to-date library/framework docs:
+
+- **`resolve_library`** — Search for a library by name, returns candidates with metadata
+- **`get_library_docs`** — Fetch docs for a library ID, scoped to an optional query/topic
+
+**Features:**
+- Bearer auth via `CONTEXT7_API_KEY` (optional, increases rate limits)
+- In-session caching of search results and doc pages
+- Smart token budgeting (default 5000, configurable per call, max 10000)
+- Proper truncation guard so context is never overwhelmed
+
+**Environment variables:**
+- `CONTEXT7_API_KEY` — Optional (higher rate limits)
+
+[Learn more →](/extensions/search-tools#context7)
+
+---
+
+## Process Management
+
+### Background Shell — Long-running Processes
+
+Next-generation background process manager designed for agentic workflows.
+
+**Key capabilities:**
+- **Multi-tier output:** digest (~30 tokens) → highlights → raw (full context)
+- **Readiness detection:** port probing, pattern matching, auto-classification
+- **Process lifecycle events:** starting → ready → error → exited
+- **Output diffing & dedup:** detect novel errors vs. repeated noise
+- **Process groups:** manage related processes as a unit
+- **Cross-session persistence:** survive context resets
+- **Expect-style interactions:** send_and_wait for interactive CLIs
+- **Context injection:** proactive alerts for crashes and state changes
+
+**Actions:**
+- `start` — Launch with auto-classification & readiness detection
+- `digest` — Structured summary (~30 tokens vs ~2000 raw)
+- `output` — Raw lines with incremental delivery
+- `highlights` — Significant output lines only
+- `wait_for_ready` — Block until process signals readiness
+- `send` / `send_and_wait` — Expect-style interactions
+- `signal` / `kill` / `restart` — Process control
+- `list` / `group_status` — Status overview
+
+**Commands:**
+- `/bg` — Interactive process manager overlay (Ctrl+Alt+B)
+
+**Environment variables:** None
+
+[Learn more →](/extensions/background-shell)
+
+---
+
+## Task Delegation
+
+### Subagent — Isolated Context Windows
+
+Delegate tasks to specialized agents with isolated context windows.
+
+**Modes:**
+- **Single:** `{ agent: "name", task: "..." }`
+- **Parallel:** `{ tasks: [{ agent: "name", task: "..." }, ...] }`
+- **Chain:** `{ chain: [{ agent: "name", task: "... {previous} ..." }, ...] }`
+
+**Uses JSON mode to capture structured output from subagents.**
+
+**Bundled agents:**
+- **Scout** — Fast codebase recon
+- **Researcher** — Web research
+- **Worker** — General-purpose execution
+
+**Environment variables:** None
+
+[Learn more about agents →](/extensions/bundled-agents)
+
+---
+
+## Platform Integration
+
+### Mac Tools — macOS Automation
+
+Provides macOS native app automation via Accessibility APIs:
+
+- Launch apps
+- Click buttons, type text
+- Read UI element properties
+- Navigate menus
+- Query window state
+
+**Requires macOS and Accessibility permissions.**
+
+**Environment variables:** None
+
+---
+
+### MCPorter — MCP Server Integration
+
+Lazy on-demand MCP (Model Context Protocol) server integration:
+
+- Auto-discovers MCP servers from `~/.pi/mcp.json`
+- Starts servers on-demand when tools are used
+- Translates MCP tool schemas to Pi SDK format
+- Handles stdio/SSE transport
+
+**Environment variables:** None (servers configured in `~/.pi/mcp.json`)
+
+---
+
+## User Interaction
+
+### Ask User Questions — Structured Input
+
+Provides `ask_user_questions` tool for structured user input:
+
+- Single-select questions
+- Multi-select questions
+- Free-text input
+- Formatted display in TUI
+
+**Environment variables:** None
+
+---
+
+### Voice — Speech-to-Text
+
+Real-time speech-to-text transcription (macOS only):
+
+- **Command:** `/voice` — Toggle real-time transcription
+- **Hotkey:** Ctrl+Alt+V
+- Uses macOS's built-in speech recognition APIs
+- Zero-latency, runs locally
+
+**Requires macOS.**
+
+**Environment variables:** None
+
+---
+
+## Customization
+
+### Slash Commands — Custom Commands
+
+Create custom slash commands:
+
+- Define commands in `~/.gsd/commands/`
+- Commands can run shell scripts, invoke tools, or prompt the agent
+- Auto-loaded on session start
+
+**Environment variables:** None
+
+---
+
+### Secure Env Collect — Secret Management
+
+Provides `collect_env_var` tool for masked secret collection:
+
+- Prompts user for secrets without displaying them
+- Writes to `.env` with proper formatting
+- No manual file editing required
+- Secrets never appear in conversation history
+
+**Environment variables:** None
+
+---
+
+## Extension Summary Table
+
+| Extension | Tools/Commands | Key Feature |
+|-----------|----------------|-------------|
+| GSD | `/gsd`, `/gsd auto`, dashboard | Core workflow orchestration |
+| Browser Tools | `browser_*` (12 tools) | Playwright automation |
+| Search the Web | `search-the-web`, `fetch_page`, `search_and_read` | Web research |
+| Google Search | `google_search` | Gemini-powered search |
+| Context7 | `resolve_library`, `get_library_docs` | Library documentation |
+| Background Shell | `bg_shell`, `/bg` | Process management |
+| Subagent | `subagent` | Task delegation |
+| Mac Tools | `mac_*` | macOS automation |
+| MCPorter | Auto-loaded MCP tools | MCP server integration |
+| Ask User Questions | `ask_user_questions` | Structured input |
+| Voice | `/voice` | Speech-to-text |
+| Slash Commands | Custom commands | Command creation |
+| Secure Env Collect | `collect_env_var` | Secret management |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Browser Tools" icon="browser" href="/extensions/browser-tools">
+    Playwright-based browser automation
+  </Card>
+  
+  <Card title="Search Tools" icon="magnifying-glass" href="/extensions/search-tools">
+    Web search and documentation access
+  </Card>
+  
+  <Card title="Background Shell" icon="terminal" href="/extensions/background-shell">
+    Long-running process management
+  </Card>
+  
+  <Card title="Specialized Agents" icon="robot" href="/extensions/bundled-agents">
+    Scout, Researcher, Worker
+  </Card>
+</CardGroup>

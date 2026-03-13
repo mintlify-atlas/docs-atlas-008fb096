@@ -1,0 +1,453 @@
+---
+title: Auto Mode
+description: Walk away and come back to built software with full supervision and crash recovery
+---
+
+Auto mode is GSD's autonomous execution engine. Type `/gsd auto`, walk away, and come back to a built project with clean git history. It's a state machine driven by files on disk that dispatches fresh agent sessions, injects focused prompts, tracks progress, detects stuck loops, recovers from crashes, and enforces budget ceilings.
+
+## Overview
+
+What makes auto mode different:
+
+- **Fresh session per unit** — Every task gets a clean 200k-token context window
+- **Context pre-loading** — Dispatch prompts inline all relevant files upfront
+- **Git branch-per-slice** — Atomic commits on slice branches, squash merge to main
+- **Crash recovery** — Synthesizes briefings from session forensics and resumes
+- **Stuck detection** — Retries once with diagnostics, then stops with the expected file
+- **Timeout supervision** — Soft/idle/hard timeouts with recovery steering
+- **Cost tracking** — Per-unit token and cost ledger with budget ceilings
+- **Adaptive replanning** — Reassesses roadmap after each slice completes
+
+<Note>
+Auto mode is production-grade. It's designed to run unsupervised for hours, handling edge cases that would crash a naive "LLM calls itself" loop.
+</Note>
+
+## Starting Auto Mode
+
+Run `/gsd auto` from the interactive session:
+
+```bash
+gsd
+/gsd auto
+```
+
+If no milestone exists, auto mode starts the discussion flow first, then begins autonomous execution after the roadmap is written.
+
+### What Happens Next
+
+Auto mode reads `.gsd/STATE.md` and dispatches the next unit:
+
+<Steps>
+  <Step title="Research">
+    Scouts the codebase and relevant documentation. Writes `S01-RESEARCH.md`.
+  </Step>
+  <Step title="Plan">
+    Decomposes the slice into tasks with must-haves. Writes `S01-PLAN.md`.
+  </Step>
+  <Step title="Execute (per task)">
+    Fresh session per task with only relevant files pre-loaded. Writes `T01-SUMMARY.md`.
+  </Step>
+  <Step title="Complete">
+    Writes slice summary, UAT script, marks roadmap `[x]`, squash-merges branch to main.
+  </Step>
+  <Step title="Reassess Roadmap">
+    Checks if the roadmap still makes sense given what was learned. Adjusts if needed.
+  </Step>
+  <Step title="Next Slice">
+    Repeats until all slices complete, then advances to the next milestone.
+  </Step>
+</Steps>
+
+## Fresh Session Per Unit
+
+Every unit of work gets a new agent session via `ctx.newSession()`. No accumulated garbage, no "I'll be more concise now" degradation.
+
+From `auto.ts`:
+
+```typescript
+// Each "unit" of work (plan slice, execute task, complete slice)
+// gets a fresh session via the stashed ctx.newSession() pattern.
+//
+// The extension reads disk state after each agent_end, determines the
+// next unit type, creates a fresh session, and injects a focused prompt
+// telling the LLM which files to read and what to do.
+```
+
+This is why auto mode can run for hours without quality degradation — every task starts with a pristine 200k-token window.
+
+## Context Pre-Loading
+
+The dispatch prompt includes inlined content so the LLM doesn't waste tool calls:
+
+- Task plan with must-haves
+- Slice plan and dependencies
+- Prior task summaries
+- Dependency slice summaries
+- Roadmap excerpts
+- Decisions register
+- Resume notes (if recovering from interruption)
+
+From `auto.ts` line 1542:
+
+```typescript
+/**
+ * Load a file and format it for inlining into a prompt.
+ * Returns the content wrapped with a source path header, or a fallback
+ * message if the file doesn't exist. This eliminates tool calls — the LLM
+ * gets the content directly instead of "Read this file:".
+ */
+async function inlineFile(
+  absPath: string | null, relPath: string, label: string,
+): Promise<string> {
+  const content = absPath ? await loadFile(absPath) : null;
+  if (!content) {
+    return `### ${label}\nSource: \`${relPath}\`\n\n_(not found — file does not exist yet)_`;
+  }
+  return `### ${label}\nSource: \`${relPath}\`\n\n${content.trim()}`;
+}
+```
+
+This approach cuts 3-5 tool calls per unit, saving tokens and time.
+
+## Supervision and Timeouts
+
+Auto mode runs three concurrent watchdogs:
+
+### Soft Timeout (Default: 20 minutes)
+
+Warns the LLM to wrap up if the unit is taking too long:
+
+```
+**TIME BUDGET WARNING — keep going only if progress is real.**
+
+This unit crossed the soft time budget.
+If you are making progress, continue. If not, switch to wrap-up mode now:
+1. rerun the minimal required verification
+2. write or update the required durable artifacts
+3. mark task or slice state on disk correctly
+4. leave precise resume notes if anything remains unfinished
+```
+
+The LLM can continue if it's making real progress. This prevents premature termination on legitimately complex tasks.
+
+### Idle Watchdog (Default: 10 minutes)
+
+Detects stalls — if the LLM makes no disk changes (tracked via `git status --porcelain`) for 10 minutes, auto mode assumes it's stuck and triggers recovery.
+
+From `auto.ts` line 1417:
+
+```typescript
+idleWatchdogHandle = setInterval(async () => {
+  if (!active || !currentUnit) return;
+  const runtime = readUnitRuntimeRecord(basePath, unitType, unitId);
+  if (!runtime) return;
+  if (Date.now() - runtime.lastProgressAt < idleTimeoutMs) return;
+
+  // Before triggering recovery, check if the agent is actually producing
+  // work on disk. `git status --porcelain` is cheap and catches any
+  // staged/unstaged/untracked changes the agent made since lastProgressAt.
+  if (detectWorkingTreeActivity(basePath)) {
+    writeUnitRuntimeRecord(basePath, unitType, unitId, currentUnit.startedAt, {
+      lastProgressAt: Date.now(),
+      lastProgressKind: "filesystem-activity",
+    });
+    return;
+  }
+
+  // ... trigger idle recovery ...
+}, 15000);
+```
+
+Idle detection is smart — it doesn't fire if the agent is actively modifying files, even if it's not calling tools frequently.
+
+### Hard Timeout (Default: 30 minutes)
+
+Absolute ceiling. If a unit runs for 30 minutes, auto mode pauses with diagnostics. You can inspect the session, fix issues, and resume.
+
+From `auto.ts` line 1453:
+
+```typescript
+unitTimeoutHandle = setTimeout(async () => {
+  unitTimeoutHandle = null;
+  if (!active) return;
+  if (currentUnit) {
+    writeUnitRuntimeRecord(basePath, unitType, unitId, currentUnit.startedAt, {
+      phase: "timeout",
+      timeoutAt: Date.now(),
+    });
+    const modelId = ctx.model?.id ?? "unknown";
+    snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId);
+  }
+  saveActivityLog(ctx, basePath, unitType, unitId);
+
+  const recovery = await recoverTimedOutUnit(ctx, pi, unitType, unitId, "hard");
+  if (recovery === "recovered") return;
+
+  ctx.ui.notify(
+    `Unit ${unitType} ${unitId} exceeded ${supervisor.hard_timeout_minutes}min hard timeout. Pausing auto-mode.`,
+    "warning",
+  );
+  await pauseAuto(ctx, pi);
+}, hardTimeoutMs);
+```
+
+### Configuring Timeouts
+
+Edit `.gsd/preferences.md` or run `/gsd prefs`:
+
+```yaml
+auto_supervisor:
+  soft_timeout_minutes: 20
+  idle_timeout_minutes: 10
+  hard_timeout_minutes: 30
+```
+
+<Tip>
+Increase timeouts for complex codebases or slower models. Decrease them for tight iteration cycles.
+</Tip>
+
+## Crash Recovery
+
+Auto mode writes a lock file at the start of each unit:
+
+```json
+{
+  "unitType": "execute-task",
+  "unitId": "T02",
+  "milestoneId": "M001",
+  "sliceId": "S01",
+  "startedAt": 1710345600000,
+  "lastProgressAt": 1710345720000
+}
+```
+
+If the session crashes (process killed, network outage, LLM API error), the lock file survives. Next time you run `/gsd auto`, auto mode:
+
+1. Reads the lock file
+2. Loads the most recent session file from `~/.gsd/sessions/`
+3. Synthesizes a recovery briefing from every tool call that made it to disk
+4. Injects a crash recovery prompt with full context
+5. Resumes execution from where it left off
+
+From `auto.ts` line 34:
+
+```typescript
+import { synthesizeCrashRecovery, getDeepDiagnostic } from "./session-forensics.js";
+import { writeLock, clearLock, readCrashLock, formatCrashInfo } from "./crash-recovery.js";
+```
+
+The recovery briefing includes:
+
+- Which unit was interrupted
+- All tool calls made during the interrupted session
+- Durable artifacts written to disk
+- Where the agent left off
+
+This lets the LLM resume mid-task without re-reading the entire codebase.
+
+<Warning>
+Crash recovery doesn't prevent data loss if the agent modified files but didn't commit them. Always run on a git repository so uncommitted work is visible via `git diff`.
+</Warning>
+
+## Stuck Detection
+
+If the same unit dispatches twice (the LLM didn't produce the expected artifact), auto mode retries once with a deep diagnostic:
+
+```
+**RETRY WITH DIAGNOSTIC — previous attempt did not produce the required artifact.**
+
+Expected file: .gsd/milestones/M001/slices/S01/T02-SUMMARY.md
+Previous session: completed without writing the summary.
+
+This is your second attempt. Write the required artifact or leave CONTINUE.md notes if blocked.
+```
+
+If it fails again, auto mode stops with the exact file it expected. This catches:
+
+- LLM writes the wrong filename
+- LLM writes to wrong directory
+- LLM forgets to write the artifact after verification
+- LLM gets stuck in analysis paralysis
+
+From `auto.ts` line 130:
+
+```typescript
+/** Track total dispatches per unit to detect stuck loops (catches A→B→A→B patterns) */
+const unitDispatchCount = new Map<string, number>();
+const MAX_UNIT_DISPATCHES = 3;
+```
+
+## Budget Ceilings
+
+Set a USD ceiling in preferences:
+
+```yaml
+budget_ceiling: 50.00
+```
+
+Auto mode pauses when the session cost exceeds the ceiling:
+
+```
+Budget ceiling $50.00 reached (spent $51.23). Pausing auto-mode — /gsd auto to continue.
+```
+
+This prevents runaway costs on long-running sessions. The cost ledger is written to `.gsd/metrics.json` after each unit.
+
+From `auto.ts` line 1104:
+
+```typescript
+ctx.ui.notify(
+  `Budget ceiling ${formatCost(budgetCeiling)} reached (spent ${formatCost(totalCost)}). Pausing auto-mode — /gsd auto to continue.`,
+  "warning",
+);
+await pauseAuto(ctx, pi);
+```
+
+## Cost Tracking
+
+Auto mode tracks token usage and cost per unit:
+
+- Model ID
+- Input/output/cache tokens
+- Cost breakdown
+- Start/end timestamps
+- Phase (research, planning, execution, completion)
+
+The ledger lives in `.gsd/metrics.json`:
+
+```json
+{
+  "units": [
+    {
+      "type": "execute-task",
+      "id": "T01",
+      "milestoneId": "M001",
+      "sliceId": "S01",
+      "modelId": "claude-sonnet-4-6",
+      "tokens": {
+        "input": 12543,
+        "output": 3421,
+        "cache_write": 8234,
+        "cache_read": 0,
+        "total": 24198
+      },
+      "cost": 0.127,
+      "startedAt": 1710345600000,
+      "finishedAt": 1710346200000
+    }
+  ]
+}
+```
+
+View totals with `/gsd status` or press `Ctrl+Alt+G` for the dashboard overlay.
+
+## Adaptive Replanning
+
+After each slice completes, auto mode triggers roadmap reassessment:
+
+```
+Review the roadmap in light of what was just completed.
+If the work revealed new information that changes the plan:
+- Reorder slices if dependencies shifted
+- Add new slices if gaps emerged
+- Remove slices if they're no longer needed
+- Update risk levels if complexity changed
+
+Write the updated roadmap to M001-ROADMAP.md.
+```
+
+This keeps the plan accurate as the project evolves. Slices added during reassessment are executed automatically — no human intervention needed.
+
+## Progress Widget
+
+Auto mode shows a real-time progress widget at the bottom of the terminal:
+
+```
+╭─ GSD Auto Mode ──────────────────────────────────────╮
+│ M001 Slice 2/5  Task 1/3  elapsed 12m 34s            │
+│ execute-task T01                                      │
+│ /home/user/project  gsd/M001/S02  $1.23  45k  sonnet │
+│ esc pause  Ctrl+Alt+G dashboard                       │
+╰──────────────────────────────────────────────────────╯
+```
+
+Press `Escape` to pause. Press `Ctrl+Alt+G` for the full dashboard overlay.
+
+## Pausing and Resuming
+
+Press `Escape` during auto mode to pause. The session is preserved:
+
+```
+Auto-mode paused. Context preserved. Run /gsd auto to resume.
+```
+
+You can interact with the agent, inspect what happened, or just `/gsd auto` to resume from disk state.
+
+<Note>
+Pausing doesn't lose progress. All completed units are on disk. The next `/gsd auto` picks up exactly where it left off.
+</Note>
+
+## When Auto Mode Stops
+
+Auto mode stops gracefully when:
+
+- All slices in the milestone complete
+- Budget ceiling is reached
+- Hard timeout is exceeded
+- Stuck detection fires twice on the same unit
+- User presses `Escape`
+- Git merge conflict blocks slice completion
+
+In all cases, auto mode writes final metrics and preserves state:
+
+```
+Auto-mode stopped. Session: $4.56 · 123k tokens · 18 units
+```
+
+Run `/gsd status` to see what was completed and what's next.
+
+## Commands
+
+| Command | What It Does |
+|---------|-------------|
+| `/gsd auto` | Start autonomous mode |
+| `/gsd stop` | Stop auto mode gracefully |
+| `/gsd status` | View progress dashboard |
+| `/gsd prefs` | Configure timeouts and budget ceiling |
+| `Escape` | Pause auto mode (preserves context) |
+| `Ctrl+Alt+G` | Toggle dashboard overlay |
+
+## Example Session
+
+```bash
+$ gsd
+> /gsd auto
+
+# Auto mode starts discuss flow (no milestone exists yet)
+# Agent: "What do you want to build?"
+> A CLI tool for managing todos with SQLite backend
+
+# Agent writes M001-CONTEXT.md, M001-ROADMAP.md
+# Auto mode dispatches: research S01
+# → plan S01
+# → execute T01 (fresh session)
+# → execute T02 (fresh session)
+# → execute T03 (fresh session)
+# → complete S01 (writes summary, UAT, marks [x], merges)
+# → reassess roadmap
+# → research S02
+# ... continues until milestone complete ...
+
+# 2 hours later:
+# Auto-mode stopped. Session: $12.34 · 456k tokens · 23 units
+# M001: CLI tool for managing todos — complete.
+```
+
+You walked away after typing "A CLI tool for managing todos with SQLite backend". Two hours later, the project is built.
+
+## Related
+
+- [Step Mode](/usage/step-mode) — execute one unit at a time with full control
+- [Two Terminal Workflow](/usage/two-terminal-workflow) — steer while auto mode runs
+- [Timeouts & Budgets](/configuration/timeouts-budgets) — how timeouts and recovery work
+- [Cost Tracking](/advanced/cost-tracking) — understanding the ledger

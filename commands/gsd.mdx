@@ -1,0 +1,217 @@
+---
+title: "/gsd"
+description: "Main entry point for GSD — shows a context-aware wizard to help you start, plan, or execute work"
+---
+
+## Overview
+
+The `/gsd` command is your main entry point for interacting with GSD 2. It reads the current state of your `.gsd/` directory and presents a context-aware wizard that helps you take the next logical step.
+
+<Note>
+  Running `/gsd` with no arguments defaults to **step mode** — it executes one unit of work, then pauses for you to confirm the next step.
+</Note>
+
+## Basic Usage
+
+```bash
+# Show the context-aware wizard
+/gsd
+
+# Aliases for common workflows
+/gsd next      # Execute one step, then pause (step mode)
+/gsd auto      # Execute continuously until milestone complete
+/gsd stop      # Stop auto-mode
+/gsd status    # View dashboard
+/gsd queue     # Queue future milestones
+/gsd discuss   # Interview for a specific slice
+```
+
+## What It Does
+
+When you run `/gsd`, it:
+
+1. **Reads disk state** from `.gsd/` files (roadmaps, plans, summaries)
+2. **Derives current phase** — determines what step you're on in the workflow
+3. **Shows a wizard** with contextual options based on your current state
+4. **Dispatches work** by injecting the GSD workflow protocol into the LLM
+
+<Tip>
+  The wizard is **smart** — it changes based on context. First time? It asks what you want to build. Mid-execution? It offers to continue. All done? It helps you start the next milestone.
+</Tip>
+
+## State-Aware Behavior
+
+GSD adapts its behavior based on what it finds in `.gsd/`:
+
+### No `.gsd/` directory yet
+
+- Bootstraps `.gsd/milestones/` structure
+- Creates `PREFERENCES.md` template
+- Initializes git repo if needed
+- Asks: "What do you want to build?"
+- Writes `M001-CONTEXT.md` based on your answer
+
+### No active milestone
+
+- Shows: "Create next milestone" option
+- Assigns next milestone ID automatically (M002, M003, etc.)
+- Launches conversational intake to capture context
+
+### Active milestone, no roadmap
+
+- Offers: "Create roadmap" or "Discuss first"
+- If context exists, recommends planning
+- If no context, suggests discussion to capture decisions
+
+### Roadmap exists, ready to execute
+
+- Offers: "Go auto" or "View status"
+- Auto-mode will loop through slices until milestone complete
+
+### Mid-execution (active slice and task)
+
+- Shows next task: `T03: Implement error handling`
+- Offers: "Execute T03", "Go auto", or "View status"
+- Resumes interrupted work if `CONTINUE.md` exists
+
+### All milestones complete
+
+- Shows: "All milestones complete"
+- Offers: "Start new milestone" or "View status"
+
+## State Files Modified
+
+Running `/gsd` itself is **read-only** — it only shows a wizard. The LLM then writes to:
+
+<AccordionGroup>
+  <Accordion title="First milestone discussion">
+    - `.gsd/milestones/M001/M001-CONTEXT.md` — captures what you want to build
+    - `.gsd/milestones/M001/M001-ROADMAP.md` — created after context discussion completes
+  </Accordion>
+  
+  <Accordion title="Planning a slice">
+    - `.gsd/milestones/M001/slices/S01/S01-PLAN.md` — task breakdown with must-haves
+    - `.gsd/milestones/M001/slices/S01/S01-RESEARCH.md` — codebase scouting (if needed)
+  </Accordion>
+  
+  <Accordion title="Executing a task">
+    - Your actual codebase files (source code, tests, config, etc.)
+    - `.gsd/milestones/M001/slices/S01/tasks/T01/T01-SUMMARY.md` — what was built
+  </Accordion>
+</AccordionGroup>
+
+## Subcommands
+
+The `/gsd` command supports several subcommands for specific workflows:
+
+| Subcommand | Purpose |
+|------------|----------|
+| `/gsd next` | Execute one step, then pause (step mode) |
+| `/gsd auto` | Execute continuously until milestone complete |
+| `/gsd stop` | Stop auto-mode |
+| `/gsd status` | View progress dashboard |
+| `/gsd queue` | Queue future milestones |
+| `/gsd discuss` | Interview for a specific slice before planning |
+| `/gsd prefs` | Edit global or project-level preferences |
+| `/gsd doctor` | Validate and auto-fix `.gsd/` state |
+| `/gsd migrate` | Migrate legacy GSD 1.x projects |
+| `/gsd remote` | Connect to Slack/Discord for async questions |
+
+<Tip>
+  See dedicated pages for [/gsd auto](/commands/gsd-auto), [/gsd status](/commands/gsd-status), and other subcommands.
+</Tip>
+
+## When to Use
+
+### Use `/gsd` when:
+
+- **Starting fresh** — no `.gsd/` directory yet
+- **Unsure what's next** — let the wizard guide you
+- **Resuming after a break** — the wizard reads disk state and shows next steps
+- **Want step-by-step control** — default behavior is step mode
+
+### Use `/gsd auto` when:
+
+- **Ready to let it run** — you've planned the milestone and want autonomous execution
+- **Large milestone** — don't want to confirm every task manually
+- **High confidence** — the roadmap and plans are solid
+
+### Use `/gsd status` when:
+
+- **Checking progress** — how many slices done?
+- **Reviewing structure** — what's the roadmap?
+- **Understanding blockers** — what's preventing progress?
+
+## Examples
+
+<CodeGroup>
+
+```bash First project
+# Bootstrap a new GSD project
+/gsd
+
+# Wizard asks: "What do you want to build?"
+# You answer: "Add Stripe payment integration"
+# LLM writes M001-CONTEXT.md and M001-ROADMAP.md
+# Result: Ready to plan first slice
+```
+
+```bash Resume after break
+# Come back to a project after days/weeks
+/gsd
+
+# Wizard reads .gsd/ and shows:
+#   "Next: T04: Add webhook handler"
+#   Options: [Execute T04] [Go auto] [View status]
+```
+
+```bash Milestone complete
+# All slices done, summary written
+/gsd
+
+# Wizard shows:
+#   "All milestones complete."
+#   Options: [Start new milestone] [View status]
+```
+
+</CodeGroup>
+
+## Crash Recovery
+
+If auto-mode crashes (process killed, system reboot, etc.), `/gsd` detects the interrupted session:
+
+```bash
+Interrupted session detected:
+  Unit: execute-task M001/S02/T03
+  Started: 2026-03-13 14:32:18
+  
+Options:
+  [Resume with /gsd auto] — Pick up where it left off
+  [Continue manually] — Open the wizard as normal
+```
+
+<Warning>
+  Crash recovery synthesizes a rich prompt from the interrupted session's tool calls, so the LLM resumes with full context.
+</Warning>
+
+## Related Commands
+
+<CardGroup cols={2}>
+
+<Card title="/gsd auto" icon="play" href="/commands/gsd-auto">
+  Run autonomously until milestone complete
+</Card>
+
+<Card title="/gsd status" icon="chart-line" href="/commands/gsd-status">
+  View progress dashboard
+</Card>
+
+<Card title="/gsd queue" icon="list" href="/commands/gsd-queue">
+  Queue future milestones
+</Card>
+
+<Card title="/gsd discuss" icon="comments" href="/commands/gsd-discuss">
+  Interview for a specific slice
+</Card>
+
+</CardGroup>

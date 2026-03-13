@@ -1,0 +1,463 @@
+---
+title: "Search & Documentation Tools"
+description: "Web search and library documentation access via Brave, Gemini, and Context7"
+icon: "magnifying-glass"
+---
+
+GSD 2 includes multiple search and documentation tools for grounding the agent in real-world web content and up-to-date library documentation.
+
+## Available Tools
+
+<CardGroup cols={3}>
+  <Card title="Search the Web" icon="magnifying-glass">
+    Brave Search + Jina Reader
+  </Card>
+  <Card title="Google Search" icon="google">
+    Gemini-powered search
+  </Card>
+  <Card title="Context7" icon="book">
+    Library documentation
+  </Card>
+</CardGroup>
+
+---
+
+## Search the Web (Brave/Tavily/Jina)
+
+**Extension:** `search-the-web`
+
+Provides three tools for web research:
+
+### 1. search-the-web
+
+**Rich web search with snippets and metadata**
+
+```typescript
+{
+  query: string,
+  count?: number,              // Results to return (default 10)
+  offset?: number,             // Pagination offset
+  freshness?: string,          // "pd" (past day), "pw" (past week), "pm" (past month), "py" (past year)
+  site?: string,               // Domain filter (e.g., "github.com")
+  extra_snippets?: number,     // Additional snippet count per result
+  summarize?: boolean          // AI-generated summary of results
+}
+```
+
+**Returns:**
+- Titles, URLs, descriptions
+- Snippets (main + extra)
+- Freshness indicators
+- Spellcheck suggestions
+- More results available indicator
+
+**Best for:** Getting links and snippets for selective browsing
+
+---
+
+### 2. fetch_page
+
+**Extract clean markdown from any URL via Jina Reader**
+
+```typescript
+{
+  url: string,
+  selector?: string,           // CSS selector to target specific content
+  offset?: number,             // Character offset for continuation reading
+  limit?: number               // Character limit (default 50000)
+}
+```
+
+**Returns:**
+- Clean markdown (no ads, nav, footers)
+- Content-type-aware extraction (JSON passthrough, PDF detection)
+- Continuation support for long pages
+
+**Best for:** Reading full page content, extracting docs, parsing articles
+
+**Requires:** `JINA_API_KEY` (optional, higher rate limits)
+
+---
+
+### 3. search_and_read
+
+**Single-call search + content extraction via Brave LLM Context API**
+
+```typescript
+{
+  query: string,
+  max_pages?: number,          // Pages to extract (default 5)
+  max_context_tokens?: number  // Token budget (default 5000)
+}
+```
+
+**Returns:**
+- Pre-extracted page content
+- Relevance scores
+- Source URLs
+
+**Best for:** When you need content, not just links
+
+**Requires:** `BRAVE_API_KEY`
+
+---
+
+## Native Anthropic Web Search (V4)
+
+When using an **Anthropic provider** (Claude), GSD injects the native `web_search_20250305` server-side tool automatically.
+
+**Benefits:**
+- **No BRAVE_API_KEY required** — Search is billed through your existing Anthropic API key
+- **Cost:** $0.01 per search
+- **Zero configuration** — Works out of the box with Anthropic models
+
+**Behavior:**
+- When `BRAVE_API_KEY` is not set + provider is Anthropic → custom Brave tools disabled, native search enabled
+- When `BRAVE_API_KEY` is set → custom Brave tools available (you choose)
+- `fetch_page` (Jina) remains available regardless
+
+<Tip>
+If you're using Claude, you don't need a Brave API key for search. It just works.
+</Tip>
+
+---
+
+## Google Search (Gemini)
+
+**Extension:** `google-search`
+
+Provides `google_search` tool via Gemini's Google Search grounding feature.
+
+### google_search
+
+```typescript
+{
+  query: string,
+  maxSources?: number          // Max source URLs to include (default 5, max 10)
+}
+```
+
+**Returns:**
+- AI-synthesized answer grounded in Google Search results
+- Source URLs from grounding metadata
+- Search queries used by Gemini
+
+**Best for:** Users with Google Cloud credits who prefer Gemini over Brave
+
+**Requires:** `GEMINI_API_KEY`
+
+**Model:** Default `gemini-2.5-flash` (configurable via `GEMINI_SEARCH_MODEL`)
+
+---
+
+## Context7 — Library Documentation
+
+**Extension:** `context7`
+
+Provides two tools for accessing up-to-date library/framework documentation.
+
+### 1. resolve_library
+
+**Search for a library by name**
+
+```typescript
+{
+  libraryName: string,         // e.g., "react", "next.js", "tailwind"
+  query?: string               // Optional: refine search
+}
+```
+
+**Returns:**
+- Library candidates with metadata:
+  - ID (e.g., `/websites/react_dev`)
+  - Title, description
+  - Trust score, benchmark score
+  - Snippet count, token count
+  - Last update date
+
+**Use to discover library IDs for `get_library_docs`**
+
+---
+
+### 2. get_library_docs
+
+**Fetch documentation for a library**
+
+```typescript
+{
+  libraryId: string,           // From resolve_library (e.g., "/websites/react_dev")
+  query?: string,              // Optional: scope to a topic (e.g., "hooks", "routing")
+  tokens?: number              // Token budget (default 5000, max 10000)
+}
+```
+
+**Returns:**
+- Markdown documentation scoped to the query
+- Properly truncated to fit token budget
+- Source metadata (library ID, query, token count)
+
+**Best for:** Getting current API docs without browsing the web
+
+**Features:**
+- Bearer auth via `CONTEXT7_API_KEY` (optional, increases rate limits)
+- In-session caching (repeated queries are free)
+- Smart token budgeting (never overwhelms context)
+
+**Requires:** `CONTEXT7_API_KEY` (optional, higher rate limits without auth)
+
+---
+
+## Environment Variables Summary
+
+| Variable | Required For | Purpose |
+|----------|--------------|----------|
+| `BRAVE_API_KEY` | `search-the-web`, `search_and_read` | Brave Search API access (optional with Anthropic) |
+| `JINA_API_KEY` | `fetch_page` | Higher rate limits for Jina Reader (optional) |
+| `GEMINI_API_KEY` | `google_search` | Google Search via Gemini |
+| `GEMINI_SEARCH_MODEL` | `google_search` | Override default model (optional) |
+| `CONTEXT7_API_KEY` | `resolve_library`, `get_library_docs` | Higher rate limits for Context7 (optional) |
+
+<Note>
+All API keys are optional except `GEMINI_API_KEY` for Google Search. Most tools work without keys at lower rate limits.
+</Note>
+
+---
+
+## When to Use Each Tool
+
+<AccordionGroup>
+  <Accordion title="search-the-web vs. google_search">
+    **search-the-web (Brave):**
+    - More control (freshness, domain filter, snippet count)
+    - Direct access to search results (titles, URLs, snippets)
+    - Best for: Browsing results, selective page reading
+    
+    **google_search (Gemini):**
+    - AI-synthesized answer from Google Search
+    - Less control, more convenience
+    - Best for: Quick answers, users with Gemini credits
+  </Accordion>
+  
+  <Accordion title="fetch_page vs. search_and_read">
+    **fetch_page (Jina):**
+    - Extract content from a known URL
+    - CSS selector targeting
+    - Continuation reading for long pages
+    - Best for: Reading specific pages, documentation
+    
+    **search_and_read (Brave LLM Context):**
+    - Search + extract in one call
+    - Automatic relevance scoring
+    - Best for: Quick research, when you need content not links
+  </Accordion>
+  
+  <Accordion title="Search tools vs. Context7">
+    **Search tools:**
+    - General web search
+    - Current events, news, blog posts
+    - Best for: Real-world information, latest updates
+    
+    **Context7:**
+    - Library/framework documentation only
+    - Pre-indexed, structured
+    - Best for: API references, official docs
+  </Accordion>
+  
+  <Accordion title="Native Anthropic search vs. Brave">
+    **Native Anthropic search:**
+    - Zero setup (no API key)
+    - $0.01/search billed through Anthropic
+    - Server-side (no result visibility to agent)
+    - Best for: Claude users who don't want to manage Brave API key
+    
+    **Brave (custom tools):**
+    - More control (freshness, domain filter, extra snippets)
+    - Structured results (agent sees titles, URLs, snippets)
+    - Best for: Power users, selective browsing, fine-tuned searches
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Caching
+
+All search extensions implement in-session caching:
+
+- **Context7:** Keyed by lowercased query + library ID + token budget
+- **Google Search:** Keyed by lowercased query
+- **Brave:** No built-in cache (fresh results each time)
+
+**Cache behavior:**
+- Persists for the session lifetime
+- Cleared on session restart
+- Reduces API usage for repeated queries
+- Cache hits indicated in tool output
+
+---
+
+## Rate Limiting
+
+**Brave Search:**
+- Free tier: 1 req/sec, 2000 req/month
+- With API key: Higher limits based on plan
+
+**Jina Reader:**
+- Anonymous: 20 req/min
+- With API key: Higher limits
+
+**Context7:**
+- Anonymous: Lower rate limits
+- With API key: Higher rate limits
+
+**Gemini:**
+- Based on Google Cloud quota
+- Flash models: High free tier
+
+<Warning>
+Rate limit errors are surfaced as `rate_limited` in tool details with guidance on next steps.
+</Warning>
+
+---
+
+## Example Workflows
+
+### Research a Library
+
+```typescript
+// Step 1: Find the library
+await resolve_library({ libraryName: "next.js" });
+// Returns: ID "/websites/nextjs_org"
+
+// Step 2: Get specific docs
+await get_library_docs({ 
+  libraryId: "/websites/nextjs_org",
+  query: "app router migration",
+  tokens: 5000
+});
+```
+
+---
+
+### Search and Extract Content
+
+```typescript
+// Option 1: Two-step (more control)
+await search_the_web({ 
+  query: "typescript 5.4 new features",
+  freshness: "pm" 
+});
+// Returns: URLs
+
+await fetch_page({ url: "..." });
+// Returns: Clean markdown
+
+// Option 2: One-step (faster)
+await search_and_read({ 
+  query: "typescript 5.4 new features",
+  max_pages: 3 
+});
+// Returns: Pre-extracted content
+```
+
+---
+
+### Find Recent News
+
+```typescript
+await search_the_web({ 
+  query: "react 19 release",
+  freshness: "pw",  // Past week
+  count: 5
+});
+```
+
+---
+
+### Domain-Scoped Search
+
+```typescript
+await search_the_web({ 
+  query: "authentication best practices",
+  site: "github.com"
+});
+```
+
+---
+
+## Error Handling
+
+**Structured error taxonomy:**
+- `auth_error` — API key missing or invalid
+- `rate_limited` — Rate limit exceeded, includes retry guidance
+- `network_error` — Network failure, includes retry recommendation
+- `parse_error` — Malformed response from API
+- `api_error` — API returned error status
+
+**Error details include:**
+- Latency (API call timing)
+- Rate limit info (remaining quota when available)
+- Spellcheck suggestions (for search tools)
+- Diagnostic hints (e.g., "Try a different library name")
+
+---
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Be specific with queries">
+    **Good:** "Next.js 15 app router migration guide"
+    
+    **Bad:** "Next.js"
+    
+    Specific queries return more relevant results.
+  </Accordion>
+  
+  <Accordion title="Use freshness filters for time-sensitive info">
+    ```typescript
+    search_the_web({ 
+      query: "node.js lts version",
+      freshness: "pm"  // Past month
+    });
+    ```
+  </Accordion>
+  
+  <Accordion title="Scope Context7 queries to topics">
+    ```typescript
+    // Good: Scoped query
+    get_library_docs({ 
+      libraryId: "/websites/react_dev",
+      query: "useEffect cleanup" 
+    });
+    
+    // Bad: No query (returns entire library)
+    get_library_docs({ libraryId: "/websites/react_dev" });
+    ```
+  </Accordion>
+  
+  <Accordion title="Use fetch_page with selectors for targeted extraction">
+    ```typescript
+    fetch_page({ 
+      url: "https://example.com/docs/api",
+      selector: "article.documentation"  // Extract only the docs
+    });
+    ```
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Browser Tools" icon="browser" href="/extensions/browser-tools">
+    Playwright-based browser automation
+  </Card>
+  
+  <Card title="Background Shell" icon="terminal" href="/extensions/background-shell">
+    Long-running process management
+  </Card>
+  
+  <Card title="Bundled Extensions" icon="boxes-stacked" href="/extensions/bundled-extensions">
+    All 13 bundled extensions
+  </Card>
+</CardGroup>

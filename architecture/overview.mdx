@@ -1,0 +1,155 @@
+---
+title: Architecture Overview
+description: High-level architecture of GSD 2, an autonomous coding agent CLI built on the Pi SDK
+---
+
+GSD is a TypeScript application that embeds the [Pi SDK](https://github.com/badlogic/pi-mono), giving it direct programmatic control over the agent session, context windows, git workflow, and execution flow.
+
+## From Prompts to Application
+
+The original GSD was a collection of markdown prompts installed into `~/.claude/commands/`. It relied entirely on the LLM reading those prompts and doing the right thing.
+
+GSD v2 is fundamentally different — it's not a prompt framework anymore, it's a **TypeScript application that controls the agent session**.
+
+| | v1 (Prompt Framework) | v2 (Agent Application) |
+|---|---|---|
+| Runtime | Claude Code slash commands | Standalone CLI via Pi SDK |
+| Context management | Hope the LLM doesn't fill up | Fresh session per task, programmatic |
+| Auto mode | LLM self-loop | State machine reading `.gsd/` files |
+| Crash recovery | None | Lock files + session forensics |
+| Git strategy | LLM writes git commands | Programmatic branch-per-slice, squash merge |
+| Cost tracking | None | Per-unit token/cost ledger with dashboard |
+| Stuck detection | None | Retry once, then stop with diagnostics |
+
+## System Architecture
+
+```
+gsd (CLI binary)
+  └─ loader.ts          Sets PI_PACKAGE_DIR, GSD env vars, dynamic-imports cli.ts
+      └─ cli.ts         Wires SDK managers, loads extensions, starts InteractiveMode
+          ├─ onboarding.ts   First-run setup wizard (LLM provider + tool keys)
+          ├─ wizard.ts       Env hydration from stored auth.json credentials
+          ├─ app-paths.ts    ~/.gsd/agent/, ~/.gsd/sessions/, auth.json
+          ├─ resource-loader.ts  Syncs bundled extensions + agents to ~/.gsd/agent/
+          └─ src/resources/
+              ├─ extensions/gsd/    Core GSD extension (auto, state, commands, ...)
+              ├─ extensions/...     12 supporting extensions
+              ├─ agents/            scout, researcher, worker
+              ├─ AGENTS.md          Agent routing instructions
+              └─ GSD-WORKFLOW.md    Manual bootstrap protocol
+```
+
+## Key Components
+
+### Loader Pattern
+
+GSD uses a **two-file loader pattern** to ensure environment variables are set before any SDK code evaluates. See [Loader Pattern](/architecture/loader-pattern) for details.
+
+- `loader.ts` — Sets `PI_PACKAGE_DIR` and other env vars with **zero SDK imports**
+- `cli.ts` — Statically imports Pi SDK modules, wires managers, starts interactive mode
+
+### Extension System
+
+GSD is built as a Pi extension that registers:
+- **Commands** — `/gsd`, `/gsd auto`, `/gsd status`, `/worktree`, etc.
+- **Tools** — Dynamic-cwd bash/file tools, patched with timeouts and worktree support
+- **Hooks** — `before_agent_start`, `agent_end`, `session_before_compact`, `session_shutdown`
+
+All extensions live in `src/resources/extensions/` and are synced to `~/.gsd/agent/extensions/` on every launch. See [Extension System](/architecture/extension-system) for details.
+
+### Resource Structure
+
+Bundled extensions, agents, and workflow prompts are synced from the npm package to `~/.gsd/agent/` on every launch. This ensures `npm update -g gsd-pi` takes effect immediately. See [Resource Structure](/architecture/resource-structure) for details.
+
+### State Machine
+
+GSD's auto mode is a **state machine driven by files on disk**. It:
+
+1. Reads `.gsd/STATE.md` to determine the next unit of work
+2. Creates a fresh agent session with a focused prompt
+3. Injects task plans, dependencies, and prior summaries into the context
+4. Lets the LLM execute
+5. Reads disk state again and dispatches the next unit
+
+**The `.gsd/` directory is the source of truth.** No in-memory state survives across sessions.
+
+## Design Decisions
+
+### `pkg/` Shim Directory
+
+`PI_PACKAGE_DIR` points to `pkg/` (not the project root) to avoid Pi's theme resolution collision with GSD's `src/` directory. The `pkg/` directory contains:
+- `package.json` with `piConfig` (name, configDir)
+- Theme assets (if any)
+
+See [Loader Pattern](/architecture/loader-pattern#pkg-shim-directory) for the full explanation.
+
+### Always-Overwrite Sync
+
+`resource-loader.ts` syncs bundled extensions and agents to `~/.gsd/agent/` on **every launch**, not just first run. This ensures:
+- `npm update -g gsd-pi` takes effect immediately
+- User customizations go in separate directories with unique names
+- No stale code from prior versions
+
+### State Lives on Disk
+
+The `.gsd/` directory is the **single source of truth**. Auto mode reads it, writes it, and advances based on what it finds. State files include:
+
+- `PROJECT.md` — Living doc of what the project is right now
+- `DECISIONS.md` — Append-only architectural decisions register
+- `STATE.md` — Quick-glance dashboard (always read first)
+- Milestone roadmaps, slice plans, task plans, summaries
+
+See [State Files](/architecture/state-files) for the complete catalog.
+
+### Fresh Context Per Task
+
+Every task, every research phase, every planning step gets a **clean 200k-token context window**. No accumulated garbage. No "I'll be more concise now."
+
+The dispatch prompt includes:
+- Inlined task plan (authoritative local execution contract)
+- Slice plan excerpt (goal, demo, verification)
+- Prior task summaries (carry-forward context)
+- Resume section (if `continue.md` exists)
+
+See `src/resources/extensions/gsd/index.ts:366-443` for the context injection logic.
+
+### Git Branch-Per-Slice
+
+Each slice gets its own branch (`gsd/M001/S01`). Tasks commit atomically on the branch. When the slice completes, it's squash-merged to main as one clean commit.
+
+```
+main:
+  docs(M001/S04): workflow documentation and examples
+  fix(M001/S03): bug fixes and doc corrections
+  feat(M001/S02): API endpoints and middleware
+  feat(M001/S01): data model and type system
+
+gsd/M001/S01 (deleted after merge):
+  feat(S01/T03): file writer with round-trip fidelity
+  feat(S01/T02): markdown parser for plan files
+  feat(S01/T01): core types and interfaces
+```
+
+Git bisect works. Individual slices are revertable.
+
+## File Paths
+
+| Path | Purpose |
+|------|--------|
+| `src/loader.ts` | Entry point — sets env vars, dynamic-imports cli.ts |
+| `src/cli.ts` | Wires SDK managers, loads extensions, starts interactive mode |
+| `src/resource-loader.ts` | Syncs bundled resources to ~/.gsd/agent/ |
+| `src/app-paths.ts` | Defines ~/.gsd/ directory structure |
+| `pkg/package.json` | Pi config shim (name, configDir) |
+| `src/resources/extensions/gsd/` | Core GSD extension |
+| `src/resources/GSD-WORKFLOW.md` | Manual bootstrap protocol |
+| `src/resources/AGENTS.md` | Agent routing instructions |
+
+## Next Steps
+
+- [Loader Pattern](/architecture/loader-pattern) — How the two-file loader works
+- [Extension System](/architecture/extension-system) — How extensions register commands, tools, and hooks
+- [Resource Structure](/architecture/resource-structure) — How bundled resources are synced
+- [GSD Directory](/architecture/gsd-directory) — The ~/.gsd/ directory structure
+- [State Files](/architecture/state-files) — All .gsd/ artifact types
+- [Artifact Types](/architecture/artifact-types) — PROJECT.md, STATE.md, ROADMAP.md, etc.

@@ -1,0 +1,344 @@
+---
+title: 'Model Configuration'
+description: 'Per-phase model selection for optimized cost and quality'
+icon: 'microchip'
+---
+
+GSD supports **per-phase model selection**, allowing you to use different models for different stages of the workflow. This lets you optimize for quality where it matters (planning) and cost where it doesn't (research).
+
+## Why Per-Phase Models?
+
+Not all work requires the same level of reasoning:
+
+- **Research** — Fast scanning of codebases and docs. Speed matters more than depth.
+- **Planning** — Architectural decisions and task decomposition. Quality matters most.
+- **Execution** — Writing code and running tests. Balanced quality and cost.
+- **Completion** — Writing summaries and UAT scripts. Speed and efficiency.
+
+Using Opus for planning and Sonnet for execution can **reduce costs by 50%** while maintaining quality where it counts.
+
+## Configuration
+
+Set models in your preferences file (`~/.gsd/preferences.md` or `.gsd/preferences.md`):
+
+```yaml
+---
+version: 1
+models:
+  research: claude-sonnet-4-6
+  planning: claude-opus-4-6
+  execution: claude-sonnet-4-6
+  completion: claude-sonnet-4-6
+---
+```
+
+<ParamField path="models" type="object">
+  Per-phase model configuration. All fields are optional — omit any to use the currently active model.
+  
+  <Expandable title="Model Phases">
+    <ResponseField name="research" type="string">
+      Model for research phases.
+      
+      **Used in:**
+      - `research-milestone` — Initial codebase scanning
+      - `research-slice` — Focused research for a single slice
+      
+      **Recommendation:** Fast, cost-effective model (e.g., Sonnet, DeepSeek)
+    </ResponseField>
+    
+    <ResponseField name="planning" type="string">
+      Model for planning phases.
+      
+      **Used in:**
+      - `plan-milestone` — Roadmap creation with slice breakdown
+      - `plan-slice` — Task decomposition with must-haves
+      - `replan-slice` — Adaptive replanning after completion
+      
+      **Recommendation:** Highest-quality model (e.g., Opus, GPT-4)
+    </ResponseField>
+    
+    <ResponseField name="execution" type="string">
+      Model for task execution.
+      
+      **Used in:**
+      - `execute-task` — Writing code, running tests, implementing features
+      
+      **Recommendation:** Balanced model (e.g., Sonnet, GPT-4o)
+    </ResponseField>
+    
+    <ResponseField name="completion" type="string">
+      Model for completion phases.
+      
+      **Used in:**
+      - `complete-slice` — Writing summaries and UAT scripts
+      - `run-uat` — Running user acceptance tests
+      
+      **Recommendation:** Fast, efficient model (e.g., Sonnet)
+    </ResponseField>
+  </Expandable>
+</ParamField>
+
+## Model Selection
+
+GSD works with any model supported by the [Pi SDK](https://github.com/badlogic/pi-mono). This includes:
+
+### Anthropic
+- `claude-opus-4-6` — Best quality, highest cost
+- `claude-sonnet-4-6` — Balanced quality and speed
+- `claude-haiku-4-6` — Fast and cheap
+
+### OpenAI
+- `gpt-4` — High quality
+- `gpt-4o` — Balanced
+- `gpt-4o-mini` — Fast and cheap
+
+### Google
+- `gemini-2.0-flash-exp` — Fast and cheap
+- `gemini-1.5-pro` — Balanced
+
+### OpenRouter
+Access hundreds of models via [OpenRouter](https://openrouter.ai):
+
+- `openrouter/deepseek/deepseek-r1` — Excellent reasoning, low cost
+- `openrouter/anthropic/claude-opus-4-6` — Pay-as-you-go Opus
+- `openrouter/meta-llama/llama-3.1-405b` — Open source flagship
+
+### Other Providers
+- **GitHub Copilot** — Use your existing subscription
+- **Amazon Bedrock** — Enterprise AWS deployment
+- **Azure OpenAI** — Microsoft enterprise models
+- **Groq** — Ultra-fast inference
+- **Cerebras** — Fastest open models
+
+See `/login` for the full list of 20+ supported providers.
+
+## Cost Optimization Strategies
+
+<Accordion title="Strategy 1: Opus for Planning Only">
+  Use the highest-quality model only where architectural decisions are made.
+  
+  ```yaml
+  models:
+    research: claude-sonnet-4-6      # Fast codebase scanning
+    planning: claude-opus-4-6         # Quality for decisions
+    execution: claude-sonnet-4-6      # Balanced implementation
+    completion: claude-sonnet-4-6     # Fast summaries
+  ```
+  
+  **Cost reduction:** ~50% vs using Opus everywhere
+  
+  **Quality impact:** Minimal — planning decisions cascade down to execution
+</Accordion>
+
+<Accordion title="Strategy 2: DeepSeek for Research">
+  Use a cheap, fast model for research since it's mostly scanning and summarizing.
+  
+  ```yaml
+  models:
+    research: openrouter/deepseek/deepseek-r1  # Fast and cheap
+    planning: claude-opus-4-6                   # Quality
+    execution: claude-sonnet-4-6                # Balanced
+    completion: claude-sonnet-4-6               # Fast
+  ```
+  
+  **Cost reduction:** ~60% vs using Opus everywhere
+  
+  **Quality impact:** Low — research is mostly context gathering
+</Accordion>
+
+<Accordion title="Strategy 3: Haiku for Completion">
+  Use the fastest model for summaries and UAT scripts since they're mechanical.
+  
+  ```yaml
+  models:
+    research: claude-sonnet-4-6
+    planning: claude-opus-4-6
+    execution: claude-sonnet-4-6
+    completion: claude-haiku-4-6     # Fast summaries
+  ```
+  
+  **Cost reduction:** ~10% additional savings
+  
+  **Quality impact:** Minimal — completion follows execution results
+</Accordion>
+
+<Accordion title="Strategy 4: All Sonnet (Balanced)">
+  Use Sonnet for everything — good quality, reasonable cost.
+  
+  ```yaml
+  models:
+    research: claude-sonnet-4-6
+    planning: claude-sonnet-4-6
+    execution: claude-sonnet-4-6
+    completion: claude-sonnet-4-6
+  ```
+  
+  **Cost reduction:** ~80% vs using Opus everywhere
+  
+  **Quality impact:** Moderate — planning quality slightly reduced
+</Accordion>
+
+## Phase-to-Unit Mapping
+
+GSD automatically selects the right model based on the current unit type:
+
+| Unit Type | Uses Model |
+|-----------|------------|
+| `research-milestone` | `models.research` |
+| `research-slice` | `models.research` |
+| `plan-milestone` | `models.planning` |
+| `plan-slice` | `models.planning` |
+| `replan-slice` | `models.planning` |
+| `execute-task` | `models.execution` |
+| `complete-slice` | `models.completion` |
+| `run-uat` | `models.completion` |
+
+If a phase-specific model isn't configured, GSD uses the **currently active model** (set via `/model`).
+
+## Checking Active Models
+
+See which models are configured:
+
+```bash
+gsd
+/gsd prefs
+```
+
+The preferences editor shows:
+- Current model for each phase
+- Active default model (fallback)
+- Option to change models interactively
+
+Alternatively, check your preferences file directly:
+
+<CodeGroup>
+
+```bash Global
+cat ~/.gsd/preferences.md
+```
+
+```bash Project
+cat .gsd/preferences.md
+```
+
+</CodeGroup>
+
+## Cost Tracking
+
+GSD tracks cost per model automatically. See the breakdown:
+
+```bash
+gsd
+/gsd status
+```
+
+Or press `Ctrl+Alt+G` to toggle the dashboard overlay.
+
+The dashboard shows:
+- **Per-phase cost** — How much each phase (research, planning, execution, completion) cost
+- **Per-model cost** — How much each model consumed
+- **Per-slice cost** — Cost breakdown by slice
+- **Projected cost** — Estimated total cost based on completed work
+
+## Examples
+
+<CodeGroup>
+
+```yaml Cost-Optimized
+---
+version: 1
+models:
+  research: openrouter/deepseek/deepseek-r1  # $0.14 per 1M tokens
+  planning: claude-opus-4-6                   # $15 per 1M tokens
+  execution: claude-sonnet-4-6                # $3 per 1M tokens
+  completion: claude-haiku-4-6                # $0.25 per 1M tokens
+---
+```
+
+```yaml Quality-Focused
+---
+version: 1
+models:
+  research: claude-sonnet-4-6
+  planning: claude-opus-4-6
+  execution: claude-opus-4-6      # Use Opus for complex tasks
+  completion: claude-sonnet-4-6
+---
+```
+
+```yaml OpenRouter Mix
+---
+version: 1
+models:
+  research: openrouter/meta-llama/llama-3.1-405b
+  planning: openrouter/anthropic/claude-opus-4-6
+  execution: openrouter/anthropic/claude-sonnet-4-6
+  completion: openrouter/google/gemini-2.0-flash-exp
+---
+```
+
+```yaml Single Model
+---
+version: 1
+models:
+  research: claude-sonnet-4-6
+  planning: claude-sonnet-4-6
+  execution: claude-sonnet-4-6
+  completion: claude-sonnet-4-6
+---
+```
+
+</CodeGroup>
+
+## Switching Models Mid-Milestone
+
+You can change model preferences at any time:
+
+1. **Edit preferences** — Update `~/.gsd/preferences.md` or `.gsd/preferences.md`
+2. **Resume auto mode** — The next unit picks up the new model automatically
+
+No need to stop or restart auto mode — model changes take effect at the next phase boundary.
+
+<Warning>
+  **Budget tracking**: Changing models doesn't reset cost tracking. Budget ceiling still applies across all models.
+</Warning>
+
+## OAuth and Subscription Models
+
+If you have a **Claude Max**, **GitHub Copilot**, or **Codex** subscription, you can use those models via OAuth:
+
+```bash
+gsd
+/login
+# Select provider (e.g., Anthropic, GitHub)
+# Complete OAuth flow
+```
+
+Models from subscription plans:
+- **Don't count against pay-as-you-go budgets**
+- **Show usage in dashboard** (tokens, not cost)
+- **Support same per-phase configuration**
+
+Example with Claude Max:
+
+```yaml
+models:
+  research: claude-sonnet-4-6     # Uses Max subscription
+  planning: claude-opus-4-6       # Uses Max subscription
+  execution: claude-sonnet-4-6    # Uses Max subscription
+  completion: claude-haiku-4-6    # Uses Max subscription
+```
+
+## Fallback Behavior
+
+If a configured model is unavailable:
+
+1. **GSD uses the currently active model** (set via `/model`)
+2. **Logs a warning** in `.gsd/STATE.md`
+3. **Continues execution** — doesn't block auto mode
+
+Check logs if you notice unexpected model usage:
+
+```bash
+tail -f .gsd/STATE.md
+```

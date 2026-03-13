@@ -1,0 +1,175 @@
+---
+title: "Extensions & Tools Overview"
+description: "Powerful extension system with 13 bundled tools and 3 specialized agents"
+icon: "puzzle-piece"
+---
+
+GSD 2 includes a powerful extension system that ships with 13 production-ready extensions and 3 specialized subagents. All extensions are loaded automatically—no configuration required.
+
+## Extension Architecture
+
+Extensions live in `~/.gsd/agent/` and are synced from the npm package on every launch. This means:
+
+- **npm updates take effect immediately** — no manual reinstall needed
+- **Extensions are versioned** — extensions update with GSD updates
+- **Always-overwrite sync** — bundled extensions can't drift out of date
+
+<Note>
+Extensions are TypeScript modules that hook into the Pi SDK's agent lifecycle, providing tools, commands, and event handlers.
+</Note>
+
+## Categories
+
+<CardGroup cols={2}>
+  <Card title="Core Workflow" icon="gear">
+    **GSD** — Milestone/slice/task orchestration, auto mode, state machine
+  </Card>
+  
+  <Card title="Web Access" icon="globe">
+    **Browser Tools** (Playwright), **Search the Web** (Brave/Tavily/Jina), **Google Search** (Gemini), **Context7** (library docs)
+  </Card>
+  
+  <Card title="Process Management" icon="terminal">
+    **Background Shell** — Long-running processes with readiness detection
+  </Card>
+  
+  <Card title="Task Delegation" icon="sitemap">
+    **Subagent** — Isolated context windows for delegated work
+  </Card>
+  
+  <Card title="Platform Integration" icon="apple">
+    **Mac Tools** — macOS app automation via Accessibility APIs
+  </Card>
+  
+  <Card title="Integration" icon="plug">
+    **MCPorter** — Lazy on-demand MCP server integration
+  </Card>
+  
+  <Card title="User Interaction" icon="question">
+    **Ask User Questions** — Structured input with single/multi-select
+  </Card>
+  
+  <Card title="Voice Input" icon="microphone">
+    **Voice** — Real-time speech-to-text transcription (macOS)
+  </Card>
+  
+  <Card title="Customization" icon="slash">
+    **Slash Commands** — Custom command creation
+  </Card>
+  
+  <Card title="Security" icon="lock">
+    **Secure Env Collect** — Masked secret collection without manual .env editing
+  </Card>
+</CardGroup>
+
+## Bundled Extensions
+
+All 13 extensions from the README's table:
+
+| Extension | What it provides |
+|-----------|------------------|
+| **GSD** | Core workflow engine, auto mode, commands, dashboard |
+| **Browser Tools** | Playwright-based browser for UI verification |
+| **Search the Web** | Brave Search, Tavily, or Jina page extraction |
+| **Google Search** | Gemini-powered web search with AI-synthesized answers |
+| **Context7** | Up-to-date library/framework documentation |
+| **Background Shell** | Long-running process management with readiness detection |
+| **Subagent** | Delegated tasks with isolated context windows |
+| **Mac Tools** | macOS native app automation via Accessibility APIs |
+| **MCPorter** | Lazy on-demand MCP server integration |
+| **Voice** | Real-time speech-to-text transcription (macOS) |
+| **Slash Commands** | Custom command creation |
+| **Ask User Questions** | Structured user input with single/multi-select |
+| **Secure Env Collect** | Masked secret collection without manual .env editing |
+
+## Extension Lifecycle
+
+Extensions hook into key lifecycle events:
+
+```typescript
+pi.on("session_start", async (event, ctx) => { /* ... */ });
+pi.on("before_agent_start", async (event, ctx) => { /* ... */ });
+pi.on("session_compact", async () => { /* ... */ });
+pi.on("session_shutdown", async () => { /* ... */ });
+```
+
+<AccordionGroup>
+  <Accordion title="session_start">
+    Runs once when a new GSD session starts. Used for:
+    - Loading saved state from disk
+    - Discovering surviving processes from previous sessions
+    - Initializing session-scoped resources
+  </Accordion>
+  
+  <Accordion title="before_agent_start">
+    Runs before each agent turn. Used for:
+    - Injecting context (e.g., background process alerts, GSD state)
+    - Loading system prompts dynamically
+    - Surfacing environment changes
+  </Accordion>
+  
+  <Accordion title="session_compact">
+    Runs when context is compacted (conversation history pruned). Used for:
+    - Preserving critical state across compaction
+    - Queueing alerts to re-inject lost context
+  </Accordion>
+  
+  <Accordion title="session_shutdown">
+    Runs when the session ends. Used for:
+    - Cleanup (killing background processes, closing browsers)
+    - Persisting state to disk
+  </Accordion>
+</AccordionGroup>
+
+## Tool Registration
+
+Extensions register tools via the Pi SDK:
+
+```typescript
+pi.registerTool({
+  name: "tool_name",
+  label: "Human Label",
+  description: "What the tool does",
+  promptGuidelines: [
+    "When to use this tool",
+    "Best practices for parameters",
+  ],
+  parameters: Type.Object({ /* ... */ }),
+  async execute(toolCallId, params, signal, onUpdate, ctx) {
+    // Implementation
+  },
+});
+```
+
+## Command Registration
+
+Extensions can also register slash commands:
+
+```typescript
+pi.registerCommand("command-name", {
+  description: "What the command does",
+  handler: async (ctx) => {
+    // Implementation
+  },
+});
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Bundled Extensions" icon="boxes-stacked" href="/extensions/bundled-extensions">
+    Explore all 13 bundled extensions in detail
+  </Card>
+  
+  <Card title="Specialized Agents" icon="robot" href="/extensions/bundled-agents">
+    Learn about Scout, Researcher, and Worker agents
+  </Card>
+  
+  <Card title="Browser Tools" icon="browser" href="/extensions/browser-tools">
+    Playwright-based browser automation for UI testing
+  </Card>
+  
+  <Card title="Search Tools" icon="magnifying-glass" href="/extensions/search-tools">
+    Web search and documentation access
+  </Card>
+</CardGroup>

@@ -1,0 +1,370 @@
+---
+title: "/gsd discuss"
+description: "Interview-driven slice planning — capture UX decisions and context before execution"
+---
+
+## Overview
+
+`/gsd discuss` launches an **interactive interview** for a specific slice. The LLM asks targeted questions to capture UX decisions, edge cases, and context that aren't obvious from the roadmap. The result is a rich `CONTEXT.md` file that guides execution.
+
+<Tip>
+  Use discuss when a slice has **gray areas** — unclear UX, multiple valid approaches, or decisions that need human input.
+</Tip>
+
+## Basic Usage
+
+```bash
+# Pick a slice to discuss
+/gsd discuss
+
+# Shows picker:
+#   [S01: Webhook receiver endpoint]  ← active slice
+#   [S02: Signature validation]       ← upcoming
+#   [S03: Event routing]              ← upcoming
+
+# Select S02, LLM asks questions like:
+#   - Which signature algorithms should we support?
+#   - What happens if verification fails?
+#   - Should we log failed attempts?
+#   - Rate limiting per endpoint or global?
+
+# After discussion, writes:
+#   .gsd/milestones/M001/slices/S02/S02-CONTEXT.md
+```
+
+## How It Works
+
+### 1. Slice Selection
+
+The command reads the roadmap and shows a picker of **non-done slices**:
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  GSD — Discuss a slice
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  M002: Webhook System
+  Pick a slice to interview. Context file will be written when done.
+
+  Actions:
+    [S01: Webhook receiver endpoint]    active slice
+    [S02: Signature validation]         upcoming
+    [S03: Event routing & processing]   upcoming
+
+  Run /gsd discuss when ready.
+```
+
+### 2. Inlined Context
+
+Before asking questions, the LLM receives **preloaded context** to ground the discussion:
+
+- **Milestone roadmap** — surrounding slices and dependencies
+- **Milestone context** — high-level goals and constraints
+- **Milestone research** — technical grounding from earlier scouting
+- **Decisions register** — architectural choices from `DECISIONS.md`
+- **Completed slice summaries** — what was already built
+
+<Note>
+  This avoids wasting a turn reading files. The LLM asks **informed questions** immediately.
+</Note>
+
+### 3. Interview
+
+The LLM asks 3-7 questions covering:
+
+- **UX decisions** — "What should the error message say?"
+- **Edge cases** — "What if the webhook arrives out of order?"
+- **Technical choices** — "Which library for HMAC?"
+- **Scope boundaries** — "Should this slice handle retries, or is that S03?"
+
+You answer conversationally:
+
+```
+LLM: Which signature algorithms should we support?
+You: HMAC-SHA256 only for now. We can add others later if needed.
+
+LLM: What happens if signature verification fails?
+You: Return 401, log the attempt with request headers, don't process event.
+
+LLM: Should we rate-limit failed verification attempts?
+You: Yes, 10 failures per IP per minute. After that, block for 5 minutes.
+```
+
+### 4. Context File
+
+After the interview, the LLM writes `S02-CONTEXT.md`:
+
+```markdown
+---
+milestone: M002
+slice: S02
+captured_at: 2026-03-13T14:32:18Z
+---
+
+# S02: Signature Validation — Context
+
+## Decisions Captured
+
+### Signature Algorithm
+- Use HMAC-SHA256 only for MVP
+- Algorithm choice driven by Stripe compatibility
+- Future: support SHA3-256 if other providers need it
+
+### Failure Handling
+- Return 401 Unauthorized on verification failure
+- Log full attempt including headers (but not body — PII risk)
+- Don't process event or dispatch to routing layer
+
+### Rate Limiting
+- 10 failed verifications per IP per minute
+- After threshold: block IP for 5 minutes
+- Use in-memory store (Redis later if needed)
+
+## Edge Cases
+
+### Replay Attacks
+- Include timestamp in signature input
+- Reject events older than 5 minutes
+- Use monotonic clock for comparison
+
+### Clock Skew
+- Allow ±2 minute tolerance for timestamp validation
+- Log warnings if skew detected (monitoring)
+
+## Out of Scope
+
+- Retry logic (that's S03)
+- Webhook registration UI (that's M003)
+- Multiple signature algorithms (future)
+```
+
+## When to Use
+
+### Use `/gsd discuss` when:
+
+- **Slice has gray areas** — unclear UX or multiple valid approaches
+- **High-risk changes** — auth, payments, data migration
+- **UX-heavy work** — what should error messages say? What's the happy path?
+- **Boundary clarification** — where does this slice end and the next begin?
+- **Before planning** — capture decisions before decomposing into tasks
+
+### Skip discuss when:
+
+- **Slice is obvious** — "Add TypeScript types for API responses" is self-explanatory
+- **Well-defined in roadmap** — the roadmap already has enough detail
+- **Low-risk refactor** — internal cleanup with no user-facing changes
+- **Time pressure** — just start and iterate
+
+<Tip>
+  Discuss is **optional**. You can skip straight to `/gsd auto` if the roadmap is clear.
+</Tip>
+
+## Multiple Interviews in One Session
+
+The discuss command **loops** — after finishing one slice, it shows the picker again:
+
+```bash
+/gsd discuss
+
+# Interview S02
+# ...writes S02-CONTEXT.md...
+
+# Picker shows again:
+#   [S01: Webhook receiver endpoint]  ← active slice
+#   [S02: Signature validation]       ← upcoming
+#   [S03: Event routing]              ← upcoming
+
+# Select S03, interview continues
+# ...writes S03-CONTEXT.md...
+
+# Press "not_yet" to exit
+```
+
+This lets you **chain multiple slice interviews** in one session.
+
+## State Files Modified
+
+<AccordionGroup>
+  <Accordion title="Slice context file">
+    - `.gsd/milestones/M001/slices/S02/S02-CONTEXT.md` — decisions, edge cases, scope
+  </Accordion>
+  
+  <Accordion title="Decisions register (optional)">
+    - `.gsd/DECISIONS.md` — architectural decisions that span slices/milestones
+  </Accordion>
+</AccordionGroup>
+
+<Note>
+  The LLM may also update `DECISIONS.md` if the discussion surfaces architectural choices that affect other slices.
+</Note>
+
+## Context File Structure
+
+The generated `CONTEXT.md` typically includes:
+
+### YAML Frontmatter
+
+```yaml
+---
+milestone: M002
+slice: S02
+captured_at: 2026-03-13T14:32:18Z
+---
+```
+
+### Sections
+
+1. **Decisions Captured** — what was decided and why
+2. **Edge Cases** — how to handle unusual scenarios
+3. **Out of Scope** — what this slice explicitly does NOT do
+4. **Open Questions** — things still unclear (if any)
+5. **Dependencies** — what this slice needs from other slices
+
+## Integration with Planning
+
+When you run `/gsd auto` after discussing:
+
+1. **Research** reads `S02-CONTEXT.md` + milestone research
+2. **Planning** uses context to write a **grounded task plan**
+3. **Execution** refers to context when making implementation choices
+
+This ensures the **human's intent** propagates through all phases.
+
+## Discuss vs Direct Planning
+
+### With Discuss
+
+```bash
+/gsd discuss
+# Interview S02 (5-10 minutes)
+# Writes S02-CONTEXT.md
+
+/gsd auto
+# LLM plans S02 using captured decisions
+# Tasks are specific: "Implement HMAC-SHA256 verification"
+# Execution hits no surprises — UX already decided
+```
+
+### Without Discuss
+
+```bash
+/gsd auto
+# LLM plans S02 with only roadmap context
+# Tasks are generic: "Add signature validation"
+# Execution requires LLM to guess UX decisions
+# May implement the wrong approach, need rework
+```
+
+<Warning>
+  Skipping discuss for **UX-heavy slices** increases the risk of rework. The LLM may implement a valid solution, but not the one you wanted.
+</Warning>
+
+## Safe to Run During Auto-Mode
+
+`/gsd discuss` is **safe to run while auto-mode is executing** — it only writes to **future slices** (which auto-mode won't touch until it reaches them).
+
+```bash
+# Auto-mode executing S01
+/gsd auto
+
+# In another terminal or after pausing:
+/gsd discuss
+# Interview S02 and S03
+# Writes S02-CONTEXT.md and S03-CONTEXT.md
+
+# When auto-mode reaches S02, it uses the context
+```
+
+## Examples
+
+<CodeGroup>
+
+```bash UX-heavy slice
+/gsd discuss
+
+# Select: S04 — Error handling and retry logic
+
+LLM: What user-facing error messages should we show?
+You: "Payment failed. Please check your card details."
+     Don't expose internal errors like "Stripe API 402".
+
+LLM: How many retries for transient failures?
+You: 3 retries with exponential backoff: 1s, 2s, 4s.
+     After that, mark as failed and alert monitoring.
+
+LLM: Should we retry on all errors or just specific ones?
+You: Only network errors and 5xx responses.
+     Don't retry 4xx — those are permanent failures.
+
+# Result: S04-CONTEXT.md with clear retry policy
+```
+
+```bash Edge case exploration
+/gsd discuss
+
+# Select: S03 — Webhook event routing
+
+LLM: What happens if an event arrives out of order?
+You: Each event has a sequence number.
+     Buffer out-of-order events for 30 seconds.
+     If the missing event arrives, process in order.
+     If timeout, process what we have and log a warning.
+
+LLM: Should we deduplicate events?
+You: Yes, track processed event IDs in Redis.
+     TTL: 24 hours (longer than any retry window).
+     
+# Result: S03-CONTEXT.md with buffering + dedup logic
+```
+
+```bash Scope clarification
+/gsd discuss
+
+# Select: S02 — User authentication
+
+LLM: Should this slice include password reset?
+You: No, that's S03. S02 is just login + logout.
+
+LLM: What about session management?
+You: Yes, JWT tokens. 7-day expiry, refresh on each request.
+
+LLM: Should we support OAuth?
+You: Not in S02. Add GitHub OAuth in M003.
+
+# Result: S02-CONTEXT.md with clear boundaries
+```
+
+</CodeGroup>
+
+## Question Quality
+
+The LLM's questions are **grounded** in:
+
+- **Milestone context** — high-level goals
+- **Roadmap** — surrounding slices and dependencies
+- **Completed work** — what was already built
+- **Decisions register** — architectural constraints
+
+This produces **specific, actionable questions** instead of generic "How should this work?"
+
+## Related Commands
+
+<CardGroup cols={2}>
+
+<Card title="/gsd queue" icon="list" href="/commands/gsd-queue">
+  Queue future milestones
+</Card>
+
+<Card title="/gsd auto" icon="play" href="/commands/gsd-auto">
+  Execute slices autonomously
+</Card>
+
+<Card title="/gsd" icon="wand-magic-sparkles" href="/commands/gsd">
+  Launch guided wizard
+</Card>
+
+<Card title="/gsd status" icon="chart-line" href="/commands/gsd-status">
+  View progress dashboard
+</Card>
+
+</CardGroup>

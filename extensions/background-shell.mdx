@@ -1,0 +1,721 @@
+---
+title: "Background Shell"
+description: "Next-generation process manager for long-running tasks with intelligent lifecycle tracking"
+icon: "terminal"
+---
+
+The **Background Shell** extension is a next-generation process manager designed for agentic workflows. Run dev servers, build watchers, test suites, and any long-running process without blocking the agent.
+
+## Overview
+
+Background Shell solves the "blocking command" problem:
+
+- **Before:** `npm run dev` blocks the agent. Can't do anything else.
+- **After:** `bg_shell start npm run dev` runs in background. Agent continues working.
+
+**Key capabilities:**
+- Multi-tier output (digest, highlights, raw)
+- Readiness detection (port probing, pattern matching)
+- Process lifecycle events (starting → ready → error → exited)
+- Output diffing & deduplication
+- Process groups
+- Cross-session persistence
+- Expect-style interactions (send_and_wait)
+- Proactive context injection
+
+---
+
+## Architecture
+
+**Process lifecycle:**
+
+```
+starting → ready → running
+        → error → recovered → ready
+        → exited (clean)
+        → crashed (non-zero exit)
+```
+
+**Status meanings:**
+- `starting` — Process launched, waiting for readiness signal
+- `ready` — Process is listening/ready (via port probe or pattern match)
+- `error` — Errors detected in output while process is running
+- `exited` — Process exited cleanly (code 0)
+- `crashed` — Process exited with non-zero code or signal
+
+**Process types** (auto-detected):
+- `server` — Dev servers, API servers, HTTP servers
+- `build` — Compilers, bundlers, build tools
+- `test` — Test runners
+- `watcher` — File watchers, nodemon, auto-reloaders
+- `generic` — Everything else
+
+---
+
+## Actions (12)
+
+### start
+
+**Launch a process with auto-classification and readiness detection**
+
+```typescript
+{
+  command: string,             // Shell command to run
+  label?: string,              // Human-readable label (default: command)
+  type?: "server" | "build" | "test" | "watcher" | "generic",
+  ready_pattern?: string,      // Regex that indicates readiness
+  ready_port?: number,         // Port to probe for readiness
+  group?: string,              // Group name for related processes
+  env?: Record<string, string> // Environment variables
+}
+```
+
+**Returns:**
+- Process ID
+- Detected type, ports, URLs
+- Status (starting, ready, error, crashed)
+
+**Example:**
+
+```typescript
+// Start a dev server with port-based readiness
+await bg_shell({
+  action: "start",
+  command: "npm run dev",
+  label: "Next.js Dev",
+  type: "server",
+  ready_port: 3000,
+  group: "frontend"
+});
+```
+
+---
+
+### digest
+
+**Structured summary (~30 tokens vs ~2000 for raw output)**
+
+```typescript
+{
+  action: "digest",
+  id?: string                  // Process ID (omit for all processes)
+}
+```
+
+**Returns:**
+- Status, uptime, type
+- Ports, URLs
+- Recent errors/warnings (last 5/3)
+- Output line count
+- Change summary (what's new since last check)
+
+**Example output:**
+
+```
+Process abc123 (Next.js Dev):
+  status: ready
+  type: server
+  uptime: 2m 15s
+  ports: 3000
+  urls: http://localhost:3000
+  output: 487 lines
+  changes: 12 new lines, 0 new errors
+```
+
+<Tip>
+Use `digest` instead of `output` when you just need status. It saves ~1970 tokens per call.
+</Tip>
+
+---
+
+### output
+
+**Raw output lines with incremental delivery**
+
+```typescript
+{
+  action: "output",
+  id: string,                  // Process ID
+  stream?: "stdout" | "stderr" | "both",
+  tail?: number,               // Last N lines (default 100)
+  filter?: string              // Regex filter (case-insensitive)
+}
+```
+
+**Returns only new output since last check** (incremental delivery).
+
+**Example:**
+
+```typescript
+// Get new errors since last check
+await bg_shell({
+  action: "output",
+  id: "abc123",
+  filter: "error|warning",
+  tail: 50
+});
+```
+
+---
+
+### highlights
+
+**Significant output lines only (5-15 lines instead of hundreds)**
+
+```typescript
+{
+  action: "highlights",
+  id: string,
+  tail?: number                // Max highlights to return (default 15)
+}
+```
+
+**Returns:**
+- Errors (score +10)
+- Warnings (score +5)
+- URLs (score +3)
+- Readiness patterns (score +8)
+- Test results (score +7)
+- Build completions (score +6)
+- Recent lines boosted (score +2)
+
+**Best for:** Quick checks without reading full output
+
+---
+
+### wait_for_ready
+
+**Block until process signals readiness**
+
+```typescript
+{
+  action: "wait_for_ready",
+  id: string,
+  timeout?: number             // Default 30000ms
+}
+```
+
+**Readiness signals:**
+- Custom `ready_pattern` matched in output
+- Custom `ready_port` is open
+- Built-in readiness patterns matched
+
+**Built-in patterns:**
+- "listening on port 3000"
+- "server running at http://..."
+- "ready in 1.2s"
+- "Local: http://..."
+- "compiled successfully"
+- "press ctrl+c to quit"
+- "watching for changes"
+
+**Example:**
+
+```typescript
+// Start server and wait
+const { id } = await bg_shell({ action: "start", command: "npm run dev", ready_port: 3000 });
+await bg_shell({ action: "wait_for_ready", id, timeout: 30000 });
+// Now server is ready!
+```
+
+<Tip>
+`wait_for_ready` is the recommended pattern for dev servers. Avoids polling loops entirely.
+</Tip>
+
+---
+
+### send
+
+**Write to process stdin**
+
+```typescript
+{
+  action: "send",
+  id: string,
+  input: string                // Text to write (newline appended)
+}
+```
+
+**Example:**
+
+```typescript
+// Send command to interactive CLI
+await bg_shell({ action: "send", id: "abc123", input: "help" });
+```
+
+---
+
+### send_and_wait
+
+**Expect-style: send input and wait for output pattern**
+
+```typescript
+{
+  action: "send_and_wait",
+  id: string,
+  input: string,
+  wait_pattern: string,        // Regex to wait for in output
+  timeout?: number             // Default 30000ms
+}
+```
+
+**Returns:**
+- `matched`: boolean
+- `output`: all output since sending (not just the matched line)
+
+**Example:**
+
+```typescript
+// Interactive CLI workflow
+const result = await bg_shell({
+  action: "send_and_wait",
+  id: "abc123",
+  input: "test connection",
+  wait_pattern: "connection successful|connection failed",
+  timeout: 10000
+});
+
+if (result.matched) {
+  // Pattern found in output
+} else {
+  // Timed out
+}
+```
+
+---
+
+### signal
+
+**Send OS signal to process**
+
+```typescript
+{
+  action: "signal",
+  id: string,
+  signal_name: string          // e.g., "SIGINT", "SIGTERM", "SIGHUP"
+}
+```
+
+---
+
+### kill
+
+**Terminate process**
+
+```typescript
+{
+  action: "kill",
+  id: string
+}
+```
+
+**Sends SIGTERM** (graceful shutdown). Use `signal` with `SIGKILL` for force kill.
+
+---
+
+### restart
+
+**Kill and relaunch with same config**
+
+```typescript
+{
+  action: "restart",
+  id: string
+}
+```
+
+**Preserves:**
+- Command, label, type
+- Ready pattern, ready port
+- Group membership
+
+**Increments restart count** (tracked for observability)
+
+---
+
+### list
+
+**List all processes with status**
+
+```typescript
+{
+  action: "list"
+}
+```
+
+**Returns:**
+- ID, label, command
+- Alive status, exit code
+- Process type, status
+- Ports, URLs, group
+- Uptime, error/warning counts
+
+---
+
+### group_status
+
+**Health check for a process group**
+
+```typescript
+{
+  action: "group_status",
+  group: string                // Group name
+}
+```
+
+**Returns:**
+- Group healthy: boolean (all processes alive and ready/starting)
+- Per-process status
+
+**Example:**
+
+```typescript
+// Start related processes
+await bg_shell({ action: "start", command: "npm run dev", group: "app" });
+await bg_shell({ action: "start", command: "npm run api", group: "app" });
+
+// Check group health
+const status = await bg_shell({ action: "group_status", group: "app" });
+if (status.healthy) {
+  // All processes ready
+}
+```
+
+---
+
+## Readiness Detection
+
+**Three modes:**
+
+### 1. Port-based (recommended for servers)
+
+```typescript
+await bg_shell({
+  action: "start",
+  command: "npm run dev",
+  ready_port: 3000
+});
+```
+
+**Polls port every 250ms** until open or timeout.
+
+---
+
+### 2. Pattern-based
+
+```typescript
+await bg_shell({
+  action: "start",
+  command: "custom-server",
+  ready_pattern: "server listening"
+});
+```
+
+**Watches stdout/stderr** for regex match.
+
+---
+
+### 3. Auto-detection (default)
+
+**Built-in patterns** automatically detect readiness for common frameworks:
+
+- Next.js: "Local: http://..."
+- Vite: "➜ Local: http://..."
+- Node servers: "listening on port 3000"
+- Python (Flask/Django/Uvicorn): "running on http://..."
+- Build tools: "build completed", "compiled successfully"
+
+**No configuration required for common tools.**
+
+---
+
+## Output Analysis
+
+**Automatic pattern matching:**
+
+**Errors:**
+- `error`, `ERROR`, `failed`, `FAILED`, `fatal`, `exception`, `panic`
+- `SyntaxError`, `TypeError`, `ReferenceError`
+- `Cannot find module`, `Module not found`
+- `ENOENT`, `EACCES`, `EADDRINUSE`
+- TypeScript errors (`TS1234:`)
+- Rust errors (`E1234:`)
+- Error symbols: `✖`, `✗`, `❌`
+
+**Warnings:**
+- `warning`, `WARN`, `deprecated`, `DEPRECATED`
+- Warning symbol: `⚠️`
+
+**URLs:**
+- Extracted from output: `http://...`, `https://...`
+
+**Ports:**
+- Extracted from "listening on port 3000", "server started on :8080", etc.
+
+**Test results:**
+- "5 tests passed", "2 tests failed", "Tests: 10 passing", etc.
+
+**Build completions:**
+- "build completed", "compiled successfully", "✓ Built in 1.2s"
+
+---
+
+## Output Tiers: Digest vs. Highlights vs. Raw
+
+| Tool | Tokens | Content | Use When |
+|------|--------|---------|----------|
+| `digest` | ~30 | Status, ports, URLs, error/warning counts, change summary | Quick status check |
+| `highlights` | ~300 | Significant lines (errors, URLs, results) | Debugging, progress check |
+| `output` | ~2000 | Full raw output (or filtered subset) | Deep debugging, reading logs |
+
+**Token savings:**
+- `digest` → 66x fewer tokens than raw
+- `highlights` → 6x fewer tokens than raw
+
+<Tip>
+Use `digest` by default. Only escalate to `highlights` or `output` when needed.
+</Tip>
+
+---
+
+## Process Groups
+
+**Manage related processes as a unit:**
+
+```typescript
+// Start a full stack
+await bg_shell({ action: "start", command: "npm run dev", group: "app" });
+await bg_shell({ action: "start", command: "npm run api", group: "app" });
+await bg_shell({ action: "start", command: "redis-server", group: "app" });
+
+// Check group health
+const status = await bg_shell({ action: "group_status", group: "app" });
+
+// Kill entire group
+for (const proc of status.processes) {
+  await bg_shell({ action: "kill", id: proc.id });
+}
+```
+
+---
+
+## Cross-Session Persistence
+
+**Surviving processes are detected on session start:**
+
+1. On session end, manifest written to `.bg-shell/manifest.json`
+2. On next session start, manifest loaded
+3. PIDs checked (Unix `process.kill(pid, 0)`)
+4. Surviving processes reported to agent
+
+**Alert example:**
+
+```
+2 background process(es) from previous session still running:
+  - abc123: Next.js Dev (pid 54321, type: server, group: frontend)
+  - xyz789: API Server (pid 54322, type: server, group: backend)
+
+Note: These processes are outside bg_shell's control. Kill them manually if needed.
+```
+
+---
+
+## Context Injection
+
+**Proactive alerts for crashes and state changes:**
+
+- **Crashes** — Injected at next agent turn
+- **Errors** — Surfaced when status transitions from `ready` → `error`
+- **Compaction survival** — After context compaction, all running processes re-injected
+
+**Example alert:**
+
+```
+[bg:abc123 Next.js Dev] CRASHED (code 1): Error: EADDRINUSE: port 3000 already in use
+```
+
+**Compaction alert:**
+
+```
+Context was compacted. 2 background process(es) are still running:
+  ✓ abc123 Next.js Dev [server] status:ready :3000
+  ✗ xyz789 Build Watcher [watcher] status:error (3 errors)
+
+Use bg_shell digest/output/kill with these IDs.
+```
+
+<Note>
+Process state survives context compaction, session switches, and tree navigation. The agent always knows what's running.
+</Note>
+
+---
+
+## Deduplication & Diffing
+
+**Output deduplication:**
+- Repeated lines tracked (hash → count)
+- Novel errors vs. repeated noise detected
+- Token savings calculated (total raw lines vs. unique lines)
+
+**Change detection:**
+- Error count diff (new errors since last read)
+- Warning count diff (new warnings since last read)
+- Output line diff (new lines since last read)
+
+**Digest change summary:**
+
+```
+changes: 42 new lines, 3 new errors, 1 new warning
+```
+
+or
+
+```
+changes: no new output
+```
+
+---
+
+## Commands
+
+### /bg
+
+**Interactive process manager overlay**
+
+- Hotkey: `Ctrl+Alt+B`
+- Lists all processes with status indicators
+- Shows ports, URLs, uptime, error counts
+- Navigate with arrow keys, kill with `K`, restart with `R`
+
+---
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use digest by default">
+    ```typescript
+    // Good: Check status with digest
+    await bg_shell({ action: "digest", id: "abc123" });
+    
+    // Bad: Read full output every time
+    await bg_shell({ action: "output", id: "abc123" });
+    ```
+    
+    Saves ~1970 tokens per call.
+  </Accordion>
+  
+  <Accordion title="Set ready_port for servers">
+    ```typescript
+    // Good: Port-based readiness
+    await bg_shell({
+      action: "start",
+      command: "npm run dev",
+      ready_port: 3000
+    });
+    await bg_shell({ action: "wait_for_ready", id: "..." });
+    
+    // Bad: Polling output manually
+    await bg_shell({ action: "start", command: "npm run dev" });
+    await new Promise(r => setTimeout(r, 5000)); // Hope it's ready?
+    ```
+  </Accordion>
+  
+  <Accordion title="Use groups for related processes">
+    ```typescript
+    // Good: Group related processes
+    await bg_shell({ action: "start", command: "npm run dev", group: "app" });
+    await bg_shell({ action: "start", command: "npm run api", group: "app" });
+    await bg_shell({ action: "group_status", group: "app" });
+    
+    // Bad: Manage individually
+    await bg_shell({ action: "start", command: "npm run dev" });
+    await bg_shell({ action: "start", command: "npm run api" });
+    // How do I check if both are ready?
+    ```
+  </Accordion>
+  
+  <Accordion title="Use highlights before output">
+    ```typescript
+    // Good: Check highlights first
+    await bg_shell({ action: "highlights", id: "abc123" });
+    // If you need more detail:
+    await bg_shell({ action: "output", id: "abc123", filter: "error" });
+    
+    // Bad: Always read full output
+    await bg_shell({ action: "output", id: "abc123" });
+    ```
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Example: Full Stack Dev Environment
+
+```typescript
+// Start frontend
+const frontend = await bg_shell({
+  action: "start",
+  command: "npm run dev",
+  label: "Next.js",
+  ready_port: 3000,
+  group: "stack"
+});
+
+// Start backend
+const backend = await bg_shell({
+  action: "start",
+  command: "npm run api",
+  label: "API",
+  ready_port: 4000,
+  group: "stack"
+});
+
+// Start database
+const db = await bg_shell({
+  action: "start",
+  command: "docker run --rm -p 5432:5432 postgres",
+  label: "Postgres",
+  ready_port: 5432,
+  group: "stack"
+});
+
+// Wait for all to be ready
+await bg_shell({ action: "wait_for_ready", id: frontend.id });
+await bg_shell({ action: "wait_for_ready", id: backend.id });
+await bg_shell({ action: "wait_for_ready", id: db.id });
+
+// Check group health
+const health = await bg_shell({ action: "group_status", group: "stack" });
+if (health.healthy) {
+  console.log("Full stack ready!");
+}
+
+// Later: Check for errors
+await bg_shell({ action: "digest" });  // All processes
+
+// Or check specific process
+await bg_shell({ action: "highlights", id: frontend.id });
+
+// Kill entire stack
+for (const proc of health.processes) {
+  await bg_shell({ action: "kill", id: proc.id });
+}
+```
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Browser Tools" icon="browser" href="/extensions/browser-tools">
+    Playwright-based browser automation
+  </Card>
+  
+  <Card title="Search Tools" icon="magnifying-glass" href="/extensions/search-tools">
+    Web search and documentation access
+  </Card>
+  
+  <Card title="Bundled Extensions" icon="boxes-stacked" href="/extensions/bundled-extensions">
+    All 13 bundled extensions
+  </Card>
+</CardGroup>
